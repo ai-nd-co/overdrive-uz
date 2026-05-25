@@ -273,39 +273,12 @@ public class CameraDaemon {
                     "surveillance", reset);
         } catch (Exception ignored) {}
         
-        // Enable daemon logging for StorageManager (uses DaemonLogger instead of android.util.Log)
+        // Enable daemon logging for StorageManager (uses DaemonLogger instead of android.util.Log).
+        // The StorageManager singleton itself is constructed later, after the HTTP/TCP/IPC
+        // server threads are already running — so a flaky external volume can't wedge the
+        // daemon's recovery UI. See "RECOVERY-FIRST STARTUP" comment further down.
         com.overdrive.app.storage.StorageManager.enableDaemonLogging();
-        
-        // SOTA: Fix storage permissions so UI app can read recordings
-        // Note: StorageManager constructor will auto-mount SD card if configured
-        com.overdrive.app.storage.StorageManager storageManager =
-            com.overdrive.app.storage.StorageManager.getInstance();
-        storageManager.fixAllPermissions();
 
-        // Start the SD-card mount watchdog at daemon boot (instead of only on
-        // ACC OFF). The watchdog no-ops when no storage type is set to SD, so
-        // it's safe to start unconditionally — but it must run continuously
-        // because BYD/Android can unmount the SD card at any time, including
-        // while ACC is ON. Stopping it on ACC ON (the previous behavior) left
-        // a hole where the HTTP server returned empty recordings until the
-        // user cycled ACC OFF→ON.
-        storageManager.startSdCardWatchdog();
-
-        // Touch the OEM-dashcam cleaner singleton so its constructor runs
-        // and (if enabled in saved config) auto-starts the periodic monitor.
-        // Without this the cleaner is lazy-initialized on first UI/API hit,
-        // meaning a fresh boot with `enabled=true` in config never actually
-        // begins reserving SD space until the user opens a settings screen.
-        com.overdrive.app.storage.ExternalStorageCleaner.getInstance();
-
-        // Periodic cleanup of our own recordings/surveillance dirs — runs
-        // continuously instead of only while a recording is active. This
-        // catches the case where the daemon crashed mid-recording leaving
-        // the dir at 95%, or the user lowered the size limit while nothing
-        // was recording. Cost: one directory walk every 30s; the threshold
-        // check exits early if usage is below 90%.
-        storageManager.startPeriodicCleanup();
-        
         log("=== CAMERA DAEMON STARTING ===");
         log("PID: " + android.os.Process.myPid() + ", UID: " + android.os.Process.myUid());
 
@@ -357,11 +330,34 @@ public class CameraDaemon {
         // disrupt the BYD dashcam. Camera ID is auto-detected in GpuSurveillancePipeline.init()
         // scanCameras();
 
-        // Start servers
+        // === RECOVERY-FIRST STARTUP ===
+        // Construct + spawn the HTTP/TCP/IPC servers BEFORE any subsystem that
+        // can block on external state (StorageManager mount probes,
+        // GPU pipeline init, BYD HAL reflection). Reasoning:
+        //
+        //   The HTTP API is the user's only recovery surface — if the daemon
+        //   wedges during init (e.g. a configured-but-missing SD/USB volume
+        //   makes `sm list-volumes` / `sm mount` hang on certain ROMs), the
+        //   user has no way to clear the bad config from the web UI because
+        //   the web UI never came up. Pre-v18 the daemon's startup was small
+        //   enough that this never bit us; v18.1's USB-storage support added
+        //   shell-process calls without timeouts inside the StorageManager
+        //   constructor, surfacing the latent fragility.
+        //
+        //   Handlers null-check gpuPipeline / storageManager and degrade
+        //   gracefully when called before those subsystems are ready, so it
+        //   is safe to expose the API early. A request that needs a
+        //   subsystem returns 503 / a structured "not ready" payload until
+        //   it's wired up — the user can still hit /api/storage/config to
+        //   force surveillanceStorageType=INTERNAL and unblock the rest.
         tcpServer = new TcpCommandServer(TCP_PORT);
         httpServer = new HttpServer(HTTP_PORT);
         ipcServer = new SurveillanceIpcServer(19877);
         accMonitor = new AccMonitor();
+
+        new Thread(tcpServer::start, "TcpServer").start();
+        new Thread(httpServer::start, "HttpServer").start();
+        new Thread(ipcServer, "SurveillanceIPC").start();
 
         // Init app context. This will break the app if run in a thread
         if (sharedAppContext == null) {
@@ -382,13 +378,48 @@ public class CameraDaemon {
                 log("Notifications init failed: " + e.getMessage());
             }
         }, "NotificationsInit").start();
-        
+
         // SOTA: Initialize unified config manager (handles migration from legacy configs)
         com.overdrive.app.config.UnifiedConfigManager.init();
-        
+
         // Load persisted quality settings BEFORE initializing surveillance
         // This ensures the encoder is created with the correct settings
         HttpServer.loadPersistedSettings();
+
+        // Construct StorageManager AFTER the servers are already accepting
+        // connections. The constructor reads the unified config's `storage`
+        // section and may attempt to mount an SD/USB volume that isn't
+        // present — those calls are time-bounded (see ensureVolumeMounted)
+        // but on a pathological ROM they can still take seconds. Doing this
+        // here means the user's web UI is already alive even on slow paths,
+        // and the watchdogs below kick in once the singleton exists.
+        com.overdrive.app.storage.StorageManager storageManager =
+            com.overdrive.app.storage.StorageManager.getInstance();
+        storageManager.fixAllPermissions();
+
+        // Start the SD-card mount watchdog at daemon boot (instead of only on
+        // ACC OFF). The watchdog no-ops when no storage type is set to SD, so
+        // it's safe to start unconditionally — but it must run continuously
+        // because BYD/Android can unmount the SD card at any time, including
+        // while ACC is ON. Stopping it on ACC ON (the previous behavior) left
+        // a hole where the HTTP server returned empty recordings until the
+        // user cycled ACC OFF→ON.
+        storageManager.startSdCardWatchdog();
+
+        // Touch the OEM-dashcam cleaner singleton so its constructor runs
+        // and (if enabled in saved config) auto-starts the periodic monitor.
+        // Without this the cleaner is lazy-initialized on first UI/API hit,
+        // meaning a fresh boot with `enabled=true` in config never actually
+        // begins reserving SD space until the user opens a settings screen.
+        com.overdrive.app.storage.ExternalStorageCleaner.getInstance();
+
+        // Periodic cleanup of our own recordings/surveillance dirs — runs
+        // continuously instead of only while a recording is active. This
+        // catches the case where the daemon crashed mid-recording leaving
+        // the dir at 95%, or the user lowered the size limit while nothing
+        // was recording. Cost: one directory walk every 30s; the threshold
+        // check exits early if usage is below 90%.
+        storageManager.startPeriodicCleanup();
         
         // Note: we deliberately don't seed the version file here. The
         // updater writes it after a successful install with the actual
@@ -444,11 +475,12 @@ public class CameraDaemon {
             }
         }
         
-        new Thread(tcpServer::start, "TcpServer").start();
-        new Thread(httpServer::start, "HttpServer").start();
-        new Thread(ipcServer, "SurveillanceIPC").start();
+        // tcpServer / httpServer / ipcServer threads were spawned at the very top
+        // of main() (recovery-first startup). The ACC monitor is started here
+        // because the pendingAccOff check above must run first — otherwise an
+        // ACC OFF that arrives during initSurveillance() can be missed.
         new Thread(accMonitor::start, "AccMonitor").start();
-        
+
         // Initialize GPS monitor with app context for standard LocationManager access
         initGpsMonitor();
 

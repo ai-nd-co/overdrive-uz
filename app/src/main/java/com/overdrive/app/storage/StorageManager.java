@@ -88,6 +88,33 @@ public class StorageManager {
             Log.e(TAG, msg);
         }
     }
+
+    /**
+     * Bounded {@link Process#waitFor()} — kills the child if it doesn't exit
+     * within {@code timeoutMs}. Returns the exit code on clean exit, or
+     * {@code -1} on timeout / interrupt. The vendored {@code sm} binary on
+     * BYD ROMs has been observed to hang indefinitely when an SD/USB volume
+     * is in a bad state (post-update with the slot empty, or with stale
+     * mount table state after a SIGKILL'd vold helper). Without a timeout
+     * here, the daemon's startup path blocked forever — see the
+     * recovery-first comment in CameraDaemon.main().
+     */
+    private static int waitForBounded(Process p, long timeoutMs, String label) {
+        try {
+            if (p.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
+                return p.exitValue();
+            }
+            logWarn(label + ": timed out after " + timeoutMs + "ms — killing child");
+            p.destroyForcibly();
+            // Give the kernel a moment to reap, but bound this too.
+            try { p.waitFor(500, TimeUnit.MILLISECONDS); } catch (InterruptedException ignored) {}
+            return -1;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            try { p.destroyForcibly(); } catch (Exception ignored) {}
+            return -1;
+        }
+    }
     
     private static void logDebug(String msg) {
         if (useDaemonLogger && daemonLogger != null) {
@@ -304,22 +331,42 @@ public class StorageManager {
         initDirectories();
         loadConfig();
 
-        // SOTA: If config says SD/USB but it's not available, try to mount it
-        // This happens when daemon starts and the volume is unmounted
-        if (!sdCardAvailable &&
-            (surveillanceStorageType == StorageType.SD_CARD ||
-             recordingsStorageType == StorageType.SD_CARD ||
-             tripsStorageType == StorageType.SD_CARD)) {
-            logInfo("SD card configured but not available - attempting mount...");
-            ensureSdCardMounted(true);
-        }
-        if (!usbAvailable &&
-            (surveillanceStorageType == StorageType.USB ||
-             recordingsStorageType == StorageType.USB ||
-             tripsStorageType == StorageType.USB)) {
-            logInfo("USB configured but not available - attempting mount...");
-            ensureUsbMounted(true);
-        }
+        // If config says SD/USB but it's not available, try to mount it on a
+        // background thread. Even with the per-call timeouts in
+        // ensureVolumeMounted, the worst-case is `sm list-volumes` (2s) +
+        // `sm mount` (8s) + 10×500ms accessibility-poll = up to ~15s. Doing
+        // that synchronously here used to wedge daemon startup whenever a
+        // configured external volume was missing or in a bad state — which
+        // is exactly the post-update scenario users hit (the updater's
+        // pkill-9 of vold helpers can leave the volume marked-unmounted in
+        // the kernel until the next ACC cycle).
+        //
+        // The startSdCardWatchdog() loop already retries failed mounts on a
+        // schedule, so there's no value in blocking startup on a one-shot
+        // attempt. Same logic for USB. updateActiveDirectories() is called
+        // here AND inside ensureVolumeMounted on success, so consumers see
+        // INTERNAL until/if the mount lands, then transparently switch.
+        Runnable mountAttempt = () -> {
+            try {
+                if (!sdCardAvailable &&
+                    (surveillanceStorageType == StorageType.SD_CARD ||
+                     recordingsStorageType == StorageType.SD_CARD ||
+                     tripsStorageType == StorageType.SD_CARD)) {
+                    logInfo("SD card configured but not available - attempting mount (async)...");
+                    ensureSdCardMounted(true);
+                }
+                if (!usbAvailable &&
+                    (surveillanceStorageType == StorageType.USB ||
+                     recordingsStorageType == StorageType.USB ||
+                     tripsStorageType == StorageType.USB)) {
+                    logInfo("USB configured but not available - attempting mount (async)...");
+                    ensureUsbMounted(true);
+                }
+            } catch (Exception e) {
+                logWarn("Async mount attempt failed: " + e.getMessage());
+            }
+        };
+        new Thread(mountAttempt, "StorageMountInit").start();
 
         updateActiveDirectories();
 
@@ -452,7 +499,7 @@ public class StorageManager {
                         }
                         logInfo(targetClass + " already mounted at: " + mountPath);
                         reader.close();
-                        listProcess.waitFor();
+                        waitForBounded(listProcess, 2_000, "sm list-volumes (already-mounted)");
                         if (isSd) initSdCardDirectories(); else initUsbDirectories();
                         updateActiveDirectories();
                         return true;
@@ -468,7 +515,7 @@ public class StorageManager {
                 break;
             }
             reader.close();
-            listProcess.waitFor();
+            waitForBounded(listProcess, 2_000, "sm list-volumes (ensureVolumeMounted)");
 
             if (volumeId != null) {
                 Process mountProcess = Runtime.getRuntime().exec(new String[]{"sm", "mount", volumeId});
@@ -481,7 +528,10 @@ public class StorageManager {
                 outReader.close();
                 errReader.close();
 
-                int exitCode = mountProcess.waitFor();
+                // 8s ceiling for the actual mount. Healthy SD/USB mounts on
+                // BYD finish in <1s; anything past 8s is a stuck vold and
+                // we'd rather fall back to internal than wedge the daemon.
+                int exitCode = waitForBounded(mountProcess, 8_000, "sm mount " + volumeId);
                 logInfo("sm mount " + volumeId + " exit code: " + exitCode +
                     (output.length() > 0 ? ", output: " + output.toString().trim() : ""));
 
@@ -723,7 +773,10 @@ public class StorageManager {
             Process p = Runtime.getRuntime().exec(new String[]{
                 "sh", "-c", "touch " + mountPath + "/.overdrive_probe && rm " + mountPath + "/.overdrive_probe"
             });
-            return p.waitFor() == 0;
+            // 2s ceiling — touch/rm against a healthy FUSE mount returns in
+            // single-digit ms; anything slower is a stuck filesystem and
+            // should be treated as not-writable so we don't latch onto it.
+            return waitForBounded(p, 2_000, "isMountWritable(" + mountPath + ")") == 0;
         } catch (Exception ignored) {
             return false;
         }
@@ -792,7 +845,7 @@ public class StorageManager {
                 // Keep iterating — both kinds may be present.
             }
             reader.close();
-            listProcess.waitFor();
+            waitForBounded(listProcess, 2_000, "sm list-volumes (discoverVolumes)");
         } catch (Exception e) {
             logDebug("Could not check sm list-volumes: " + e.getMessage());
         }
@@ -874,7 +927,7 @@ public class StorageManager {
                 BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
                 String line = reader.readLine();
                 reader.close();
-                p.waitFor();
+                waitForBounded(p, 1_000, "getprop " + key);
                 return line != null ? line.trim() : "";
             } catch (Exception e2) {
                 return "";
@@ -1159,7 +1212,7 @@ public class StorageManager {
             logWarn("Could not load storage config: " + e.getMessage());
         }
     }
-    
+
     /**
      * Save storage limits and storage type to config file.
      */
