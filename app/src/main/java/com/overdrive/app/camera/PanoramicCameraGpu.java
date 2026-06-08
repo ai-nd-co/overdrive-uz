@@ -2570,7 +2570,21 @@ public class PanoramicCameraGpu {
                 // camera cadence, eliminating the rubber-banding/snapback the
                 // EMA introduced at 15+ fps.
                 updateWindshieldCameraOnGlThread();
-                if (windshieldStarted && windshieldPending) {
+                // Windshield (dashcam top band): drain the ImageReader EVERY
+                // recorder frame, exactly like the main-camera ImageReader path
+                // (consumeLatestImageAndBind above is called unconditionally,
+                // never gated on imagePending). The BYD AVM HAL is finicky about
+                // draining — see the currentBoundImage field comment: the
+                // consumer must keep pulling the latest gralloc slot or the
+                // producer side stalls. The old `&& windshieldPending` gate let a
+                // single dropped OnImageAvailable wakeup (the listener can set the
+                // flag in the window between consume() and the reset) leave the
+                // queue undrained; the windshield producer then stalled and the
+                // top band froze on its first bound frame — the "only the first
+                // frame" bug. acquireLatestImage() returns null when nothing new
+                // arrived, so this is a cheap no-op that keeps the last frame
+                // bound on idle iterations.
+                if (windshieldStarted) {
                     consumeLatestWindshieldImageAndBind();
                     windshieldPending = false;
                 }
