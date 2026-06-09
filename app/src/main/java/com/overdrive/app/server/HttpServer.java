@@ -503,6 +503,10 @@ public class HttpServer {
                 if (!serveStaticFile(out, "local/vehicle-control.html")) {
                     HttpResponse.sendError(out, 404, "vehicle-control.html not found");
                 }
+            } else if (path.equals("/automation.html") || path.equals("/automation")) {
+                if (!serveStaticFile(out, "local/automation.html")) {
+                    HttpResponse.sendError(out, 404, "automation.html not found");
+                }
             } else if (path.equals("/telegram.html") || path.equals("/telegram")) {
                 if (!serveStaticFile(out, "local/telegram.html")) {
                     HttpResponse.sendError(out, 404, "telegram.html not found");
@@ -725,6 +729,11 @@ public class HttpServer {
         // Vehicle Control API
         if (path.startsWith("/api/vehicle")) {
             return VehicleControlApiHandler.handle(method, path, body, out);
+        }
+
+        // JS Automation API (scenario CRUD, enable/dry-run toggles, manual fire, audit)
+        if (path.startsWith("/api/automation")) {
+            return AutomationApiHandler.handle(method, path, body, out);
         }
 
         // Autoservice AIDL debug sweep — read-only reach probes for the BYD

@@ -5,8 +5,22 @@ scenarios that react to triggers (vehicle wakes up, manual activate, door, charg
 and perform vehicle actions (lock, close windows, flash, climate, ...). This is the one
 capability Overdrive does not already have, and it is our differentiator.
 
-Status: P1 IMPLEMENTED (engine + 2 triggers + safety + unit tests, wired into the daemon).
-P2/P3 (REST CRUD + web editor, more triggers/actions) are still to do.
+Status: P1 + P2 IMPLEMENTED. P1 = engine + triggers + safety + unit tests, wired into the
+daemon. P2 = REST API + web editor (manage scenarios, enable/dry-run toggles, manual fire,
+audit view) at `/automation`. P3 (more triggers/actions, richer state) is still to do.
+
+## P2 - what is implemented
+
+- `server/AutomationApiHandler.java` REST surface (routed in HttpServer under `/api/automation`):
+  `GET/POST /state` (enabled + dryRun toggles), `GET /scenarios`, `GET/POST/DELETE /scenario`,
+  `POST /fire` (manual test fire), `GET /audit`.
+- `assets/web/local/automation.html` editor: scenario list + code editor, Save/New/Delete,
+  Enabled and Live toggles with status pills, per-trigger test-fire buttons, and a live audit
+  view. Reached from the dashboard nav ("Automation") or `/automation`.
+- The facade gained CRUD + reload(): saving/deleting a scenario rewrites the file and rebuilds
+  the engine so handlers stay in sync. Scenario names are path-traversal-sanitized (.js basename).
+- Enable/dry-run from the UI write the same `enabled` / `live` flag files, so UI state and the
+  adb-flag method agree and survive a daemon restart.
 
 ## P1 - what is implemented
 

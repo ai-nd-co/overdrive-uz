@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Automation - Overdrive</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --panel2: #1c2230; --line: #2a3140;
+    --text: #e6edf3; --muted: #93a0b4; --accent: #4cc2ff; --warn: #ffb454;
+    --danger: #ff6b6b; --ok: #58d68d; --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 14px 20px;
+    border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: .3px; }
+  header .spacer { flex: 1; }
+  .pill { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line);
+    color: var(--muted); }
+  .pill.on { color: #08210f; background: var(--ok); border-color: var(--ok); font-weight: 600; }
+  .pill.live { color: #2a1400; background: var(--warn); border-color: var(--warn); font-weight: 600; }
+  .toggle { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; user-select: none;
+    font-size: 13px; color: var(--muted); }
+  .toggle input { accent-color: var(--accent); width: 16px; height: 16px; }
+  main { display: grid; grid-template-columns: 240px 1fr; gap: 16px; padding: 16px 20px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted);
+    margin: 0 0 10px; }
+  ul.files { list-style: none; margin: 0; padding: 0; }
+  ul.files li { padding: 8px 10px; border-radius: 7px; cursor: pointer; font-family: var(--mono);
+    font-size: 13px; color: var(--text); }
+  ul.files li:hover { background: var(--panel2); }
+  ul.files li.active { background: var(--accent); color: #04212e; font-weight: 600; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    padding: 8px 12px; border-radius: 7px; cursor: pointer; font-size: 13px; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #04212e; border-color: var(--accent); font-weight: 600; }
+  button.danger { color: var(--danger); border-color: #45222a; }
+  input.name { background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 7px; padding: 8px 10px; font-family: var(--mono); font-size: 13px; flex: 1; min-width: 140px; }
+  textarea { width: 100%; height: 340px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px; padding: 12px; font-family: var(--mono);
+    font-size: 13px; line-height: 1.5; resize: vertical; }
+  .hint { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+  .audit { font-family: var(--mono); font-size: 12px; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px; height: 180px; overflow: auto; white-space: pre-wrap; color: var(--muted); }
+  .toast { position: fixed; bottom: 18px; right: 18px; background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; font-size: 13px;
+    opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  .banner { margin: 0 20px 0; padding: 10px 14px; border-radius: 8px; font-size: 13px;
+    border: 1px solid var(--line); background: var(--panel2); color: var(--muted); }
+  .banner b { color: var(--text); }
+  .stack { display: flex; flex-direction: column; gap: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Automation</h1>
+  <span id="enabledPill" class="pill">disabled</span>
+  <span id="dryPill" class="pill">dry-run</span>
+  <div class="spacer"></div>
+  <label class="toggle"><input type="checkbox" id="enabledToggle" /> Enabled</label>
+  <label class="toggle"><input type="checkbox" id="liveToggle" /> Live (actuate)</label>
+</header>
+
+<p class="banner">
+  Scenarios react to triggers and call the car through the vehicle command router.
+  <b>Safe posture:</b> off by default; while in dry-run, actions are only logged, never sent.
+  Turn on <b>Enabled</b> to run scenarios, then <b>Live</b> to actually actuate. Trunk is never available.
+</p>
+
+<main>
+  <div class="panel stack">
+    <div>
+      <h2>Scenarios</h2>
+      <ul class="files" id="fileList"></ul>
+    </div>
+    <div class="row">
+      <button id="newBtn">New</button>
+      <button id="deleteBtn" class="danger">Delete</button>
+    </div>
+    <div>
+      <h2>Test fire</h2>
+      <div class="row">
+        <button data-fire="vehicle.wake">wake</button>
+        <button data-fire="vehicle.sleep">sleep</button>
+        <button data-fire="app.activate">activate</button>
+      </div>
+      <p class="hint">Runs handlers now (respects enabled / dry-run).</p>
+    </div>
+  </div>
+
+  <div class="panel stack">
+    <div class="row">
+      <input class="name" id="nameInput" placeholder="my-scenario.js" />
+      <button id="saveBtn" class="primary">Save</button>
+    </div>
+    <textarea id="editor" spellcheck="false" placeholder="scenario({ when: 'vehicle.wake', run: function(ctx){ /* ... */ } });"></textarea>
+    <p class="hint">API: on(type, fn) / scenario({when, run}); vehicle.lock/unlock/closeWindows/flash/climateOn/climateOff; state.accOn; notify(msg); log(msg).</p>
+    <div>
+      <h2>Audit <button id="auditRefresh" style="float:right;padding:3px 8px;font-size:11px;">refresh</button></h2>
+      <div class="audit" id="audit"></div>
+    </div>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const api = (p, opt) => fetch('/api/automation' + p, Object.assign({ credentials: 'same-origin' }, opt));
+let current = null;
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+function renderState(s) {
+  const ep = document.getElementById('enabledPill');
+  ep.textContent = s.enabled ? 'enabled' : 'disabled';
+  ep.className = 'pill' + (s.enabled ? ' on' : '');
+  const dp = document.getElementById('dryPill');
+  dp.textContent = s.dryRun ? 'dry-run' : 'LIVE';
+  dp.className = 'pill' + (s.dryRun ? '' : ' live');
+  document.getElementById('enabledToggle').checked = !!s.enabled;
+  document.getElementById('liveToggle').checked = !s.dryRun;
+
+  const list = document.getElementById('fileList');
+  list.innerHTML = '';
+  (s.scenarios || []).forEach(name => {
+    const li = document.createElement('li');
+    li.textContent = name;
+    if (name === current) li.classList.add('active');
+    li.onclick = () => openScenario(name);
+    list.appendChild(li);
+  });
+}
+
+async function refreshState() {
+  const s = await (await api('/state')).json();
+  renderState(s);
+}
+
+async function openScenario(name) {
+  const r = await api('/scenario?name=' + encodeURIComponent(name));
+  if (!r.ok) { toast('open failed'); return; }
+  const d = await r.json();
+  current = d.name;
+  document.getElementById('nameInput').value = d.name;
+  document.getElementById('editor').value = d.source;
+  refreshState();
+}
+
+async function save() {
+  const name = document.getElementById('nameInput').value.trim();
+  const source = document.getElementById('editor').value;
+  if (!name) { toast('name required'); return; }
+  const r = await api('/scenario', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, source }) });
+  if (!r.ok) { toast('save failed: ' + r.status); return; }
+  current = name;
+  renderState(await r.json());
+  toast('saved ' + name);
+}
+
+async function del() {
+  if (!current) { toast('nothing selected'); return; }
+  if (!confirm('Delete ' + current + '?')) return;
+  const r = await api('/scenario?name=' + encodeURIComponent(current), { method: 'DELETE' });
+  if (!r.ok) { toast('delete failed'); return; }
+  current = null;
+  document.getElementById('nameInput').value = '';
+  document.getElementById('editor').value = '';
+  renderState(await r.json());
+  toast('deleted');
+}
+
+async function setFlag(field, value) {
+  const body = {}; body[field] = value;
+  const r = await api('/state', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body) });
+  renderState(await r.json());
+}
+
+async function refreshAudit() {
+  const d = await (await api('/audit')).json();
+  document.getElementById('audit').textContent = (d.lines || []).join('\n') || '(empty)';
+}
+
+document.getElementById('saveBtn').onclick = save;
+document.getElementById('deleteBtn').onclick = del;
+document.getElementById('newBtn').onclick = () => {
+  current = null;
+  document.getElementById('nameInput').value = 'new-scenario.js';
+  document.getElementById('editor').value =
+    "scenario({\n  when: 'vehicle.wake',\n  run: function (ctx) {\n    // vehicle.lock(); notify('hi');\n  }\n});\n";
+  refreshState();
+};
+document.getElementById('enabledToggle').onchange = e => setFlag('enabled', e.target.checked);
+document.getElementById('liveToggle').onchange = e => setFlag('dryRun', !e.target.checked);
+document.getElementById('auditRefresh').onclick = refreshAudit;
+document.querySelectorAll('[data-fire]').forEach(b => b.onclick = async () => {
+  const type = b.getAttribute('data-fire');
+  const r = await api('/fire', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type }) });
+  const d = await r.json();
+  toast('fired ' + type + ' (' + d.ran + ' ran)');
+  refreshAudit();
+});
+
+refreshState();
+refreshAudit();
+</script>
+</body>
+</html>

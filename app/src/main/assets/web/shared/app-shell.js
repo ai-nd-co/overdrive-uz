@@ -48,6 +48,7 @@
         // ===== Vehicle ===== — control + trip history.
         { divider: true, label: 'Vehicle', i18n: 'nav.vehicle_group' },
         { href: 'vehicle-control.html', i18n: 'nav.vehicle_control', label: 'Vehicle Control', svg: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>' },
+        { href: 'automation.html',      i18n: 'nav.automation',      label: 'Automation',      svg: '<path d="M12 2v4"/><path d="M12 18v4"/><path d="m4.93 4.93 2.83 2.83"/><path d="m16.24 16.24 2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><circle cx="12" cy="12" r="3"/>' },
         { href: 'trips.html',           i18n: 'nav.trips',           label: 'Trips',           svg: '<path d="M3 17h2v-7l4 4 4-4 4 4 4-4v7h2"/><path d="M4 5h16"/>' },
 
         // ===== Integrations group ===== — mirrors the native Integrations

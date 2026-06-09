@@ -3,19 +3,22 @@ package com.overdrive.app.automation
 import java.io.File
 
 /**
- * Process-wide facade the daemon talks to. init() wires the real adapters and loads scenario
- * files; the daemon then calls onVehicleWake()/onVehicleSleep()/activate() at the right moments.
+ * Process-wide facade the daemon and the HTTP API talk to.
  *
- * Safe defaults: enabled=false and dryRun=true, so nothing actuates the car until the owner
- * explicitly turns the engine on and takes it out of dry-run.
+ * init() wires the real adapters and loads scenario files. The enabled / dry-run state is
+ * persisted as flag files in the scenarios dir (`enabled`, `live`) so it survives a daemon
+ * restart and can be toggled with plain adb. The REST handler drives the same flags + CRUD.
+ *
+ * Safe defaults: with no flags the engine loads scenarios but fires nothing; `enabled` alone
+ * runs them in dry-run (audited, no actuation); add `live` to actually actuate. Trunk is never
+ * reachable from JS.
  */
 object Automation {
 
-    @Volatile
-    private var engine: AutomationEngine? = null
-
-    @Volatile
-    private var lastAccOff: Boolean? = null
+    @Volatile private var engine: AutomationEngine? = null
+    @Volatile private var dir: File? = null
+    @Volatile private var logger: (String) -> Unit = { println(it) }
+    @Volatile private var lastAccOff: Boolean? = null
 
     @JvmOverloads
     @Synchronized
@@ -26,23 +29,26 @@ object Automation {
         log: (String) -> Unit = { println(it) },
     ): AutomationEngine {
         engine?.let { return it }
+        dir = scenariosDir
+        logger = log
+        // Honor explicit init args by seeding the flag files (flags are the source of truth).
+        if (enabled) toggleFlag(File(scenariosDir, FLAG_ENABLED), true)
+        if (!dryRun) toggleFlag(File(scenariosDir, FLAG_LIVE), true)
+        return build(scenariosDir, log).also { engine = it }
+    }
 
-        // No-rebuild owner toggles: drop an empty `enabled` file in the scenarios dir to arm
-        // the engine, and a `live` file to leave dry-run (actually actuate). Absent both, the
-        // safe default holds: disabled + dry-run.
-        val armed = enabled || File(scenariosDir, "enabled").exists()
-        val live = !dryRun || File(scenariosDir, "live").exists()
+    @Synchronized
+    fun reload(): AutomationEngine? {
+        val d = dir ?: return null
+        return build(d, logger).also { engine = it }
+    }
 
-        val audit = FileAuditLog(File(scenariosDir, "audit.log"))
-        val host = ScriptHost(
-            sink = RouterVehicleActionSink(),
-            state = DaemonStateProvider(),
-            notifier = LogNotifier(log),
-            audit = audit,
-            dryRun = !live,
-        )
+    private fun build(scenariosDir: File, log: (String) -> Unit): AutomationEngine {
+        val armed = File(scenariosDir, FLAG_ENABLED).exists()
+        val live = File(scenariosDir, FLAG_LIVE).exists()
+        val audit = FileAuditLog(File(scenariosDir, AUDIT_FILE))
+        val host = ScriptHost(RouterVehicleActionSink(), DaemonStateProvider(), LogNotifier(log), audit, dryRun = !live)
         val eng = AutomationEngine(ScriptEngine(host), host, audit, enabled = armed)
-
         runCatching {
             scenariosDir.mkdirs()
             scenariosDir.listFiles { f -> f.isFile && f.name.endsWith(".js") }
@@ -52,16 +58,13 @@ object Automation {
                         .onFailure { log("scenario load failed ${f.name}: ${it.message}") }
                 }
         }
-
-        engine = eng
-        log("automation initialized: enabled=$armed dryRun=${!live} triggers=${eng.triggerTypes}")
+        log("automation built: enabled=$armed dryRun=${!live} triggers=${eng.triggerTypes}")
         return eng
     }
 
-    /**
-     * Single idempotent entry for ACC transitions (accIsOff: true = sleep, false = wake).
-     * Dedups repeat edges itself, so the daemon can call it from anywhere without double-firing.
-     */
+    // ---- triggers ----
+
+    /** Single idempotent entry for ACC edges (accIsOff: true = sleep, false = wake). */
     @Synchronized
     fun onAccEdge(accIsOff: Boolean) {
         if (lastAccOff == accIsOff) return
@@ -73,5 +76,83 @@ object Automation {
     fun onVehicleSleep() { engine?.fire(Triggers.VEHICLE_SLEEP) }
     fun activate() { engine?.fire(Triggers.APP_ACTIVATE) }
 
+    /** Manually fire a trigger (for the "test" button in the UI). Respects enabled/dry-run. */
+    fun fireManual(type: String): Int = engine?.fire(type) ?: 0
+
+    // ---- state (for the REST API / UI) ----
+
+    fun isEnabled(): Boolean = engine?.enabled ?: false
+    fun isDryRun(): Boolean = engine?.dryRun ?: true
+    fun triggerTypesList(): List<String> = engine?.triggerTypes?.toList() ?: emptyList()
+
+    @Synchronized
+    fun setEnabled(enabled: Boolean) {
+        val d = dir ?: return
+        toggleFlag(File(d, FLAG_ENABLED), enabled)
+        reload()
+    }
+
+    @Synchronized
+    fun setDryRun(dryRun: Boolean) {
+        val d = dir ?: return
+        toggleFlag(File(d, FLAG_LIVE), !dryRun) // `live` present means NOT dry-run
+        reload()
+    }
+
+    // ---- scenario CRUD ----
+
+    fun listScenarios(): List<String> {
+        val d = dir ?: return emptyList()
+        return d.listFiles { f -> f.isFile && f.name.endsWith(".js") }?.map { it.name }?.sorted() ?: emptyList()
+    }
+
+    fun readScenario(name: String): String? {
+        val f = safeFile(name) ?: return null
+        return if (f.isFile) runCatching { f.readText() }.getOrNull() else null
+    }
+
+    @Synchronized
+    fun saveScenario(name: String, source: String): Boolean {
+        val d = dir ?: return false
+        val f = safeFile(name) ?: return false
+        return runCatching { d.mkdirs(); f.writeText(source); reload(); true }.getOrDefault(false)
+    }
+
+    @Synchronized
+    fun deleteScenario(name: String): Boolean {
+        val f = safeFile(name) ?: return false
+        val ok = runCatching { !f.exists() || f.delete() }.getOrDefault(false)
+        if (ok) reload()
+        return ok
+    }
+
+    fun readAudit(maxLines: Int): List<String> {
+        val d = dir ?: return emptyList()
+        val f = File(d, AUDIT_FILE)
+        if (!f.isFile) return emptyList()
+        return runCatching { f.readLines().takeLast(maxLines) }.getOrDefault(emptyList())
+    }
+
     fun engineOrNull(): AutomationEngine? = engine
+
+    // ---- helpers ----
+
+    private fun toggleFlag(f: File, on: Boolean) {
+        runCatching {
+            if (on) { f.parentFile?.mkdirs(); if (!f.exists()) f.createNewFile() }
+            else if (f.exists()) f.delete()
+        }
+    }
+
+    /** Path-traversal-safe scenario file: basename only, must end in .js. */
+    private fun safeFile(name: String): File? {
+        val d = dir ?: return null
+        val base = name.substringAfterLast('/').substringAfterLast('\\')
+        if (base.isBlank() || base.contains("..") || !base.endsWith(".js")) return null
+        return File(d, base)
+    }
+
+    private const val FLAG_ENABLED = "enabled"
+    private const val FLAG_LIVE = "live"
+    private const val AUDIT_FILE = "audit.log"
 }
