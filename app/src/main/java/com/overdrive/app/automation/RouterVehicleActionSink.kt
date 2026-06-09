@@ -37,7 +37,15 @@ class RouterVehicleActionSink(
                 }
                 VehicleCommandRouter.ClimateSetFanCommand(l.toInt())
             }
-            "lights" -> VehicleCommandRouter.LightsCommand(args["on"] as? Boolean ?: true)
+            "lights" -> {
+                val raw = args["on"]
+                val on = when {
+                    !args.containsKey("on") -> true        // omitted -> on
+                    raw is Boolean -> raw
+                    else -> return ActionResult(false, "lights needs a boolean")
+                }
+                VehicleCommandRouter.LightsCommand(on)
+            }
             else -> return ActionResult(false, "unknown action: $action")
         }
         return try {

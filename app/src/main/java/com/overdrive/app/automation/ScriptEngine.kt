@@ -61,7 +61,10 @@ class ScriptEngine(
 
     /** Evaluate a scenario source once; its on()/scenario() calls register handlers. */
     fun load(name: String, source: String) {
-        inContext { cx, sc -> cx.evaluateString(sc, source, name, 1, null) }
+        inContext { cx, sc ->
+            host.loading = true
+            try { cx.evaluateString(sc, source, name, 1, null) } finally { host.loading = false }
+        }
     }
 
     /** Fire a trigger: run every handler registered for its type. Returns how many ran. */
@@ -131,7 +134,7 @@ class ScriptEngine(
         act("sunshade", "sunshade") { a -> mapOf("action" to str(a.getOrNull(0))) }
         act("climateTemp", "climate-temp") { a -> mapOf("tempC" to (a.getOrNull(0) as? Number)) }
         act("climateFan", "climate-fan") { a -> mapOf("level" to (a.getOrNull(0) as? Number)) }
-        act("lights", "lights") { a -> mapOf("on" to (a.getOrNull(0) as? Boolean)) }
+        act("lights", "lights") { a -> if (a.isEmpty()) emptyMap() else mapOf("on" to a[0]) }
         ScriptableObject.putProperty(scope, "vehicle", vehicle)
     }
 

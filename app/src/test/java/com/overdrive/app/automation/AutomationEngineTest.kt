@@ -166,6 +166,16 @@ class AutomationEngineTest {
     }
 
     @Test
+    fun topLevelActionsAreBlockedAtLoad() {
+        // A scenario file may only actuate from inside on()/scenario() handlers. Top-level
+        // vehicle.* must not fire at load time, even with enabled=false + live.
+        val (eng, sink, audit) = rig(dryRun = false, enabled = false)
+        eng.load("s", "vehicle.lock(); on('app.activate', function(){});")
+        assertTrue("top-level action must not actuate", sink.calls.isEmpty())
+        assertTrue(audit.kinds().contains("blocked"))
+    }
+
+    @Test
     fun nativeFunctionsSupportCallApplyBind() {
         val (eng, sink, _) = rig()
         eng.load("s", "on('app.activate', function(){ vehicle.lock.call(null); vehicle.flash.apply(null, []); var f = vehicle.unlock.bind(null); f(); });")

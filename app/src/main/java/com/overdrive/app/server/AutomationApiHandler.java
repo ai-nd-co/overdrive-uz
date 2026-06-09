@@ -30,7 +30,9 @@ public class AutomationApiHandler {
 
         if (route.equals("/api/automation/state")) {
             if (method.equalsIgnoreCase("POST")) {
-                JSONObject in = parse(body);
+                JSONObject in;
+                try { in = new JSONObject((body == null || body.trim().isEmpty()) ? "{}" : body); }
+                catch (Exception e) { HttpResponse.sendError(out, 400, "invalid JSON body"); return true; }
                 if (in.has("enabled")) Automation.INSTANCE.setEnabled(in.optBoolean("enabled", Automation.INSTANCE.isEnabled()));
                 if (in.has("dryRun")) Automation.INSTANCE.setDryRun(in.optBoolean("dryRun", Automation.INSTANCE.isDryRun()));
             }
@@ -57,7 +59,9 @@ public class AutomationApiHandler {
                 return true;
             }
             if (method.equalsIgnoreCase("POST") || method.equalsIgnoreCase("PUT")) {
-                JSONObject in = parse(body);
+                JSONObject in;
+                try { in = new JSONObject(body == null ? "" : body); }
+                catch (Exception e) { HttpResponse.sendError(out, 400, "invalid JSON body"); return true; }
                 String name = in.optString("name", "");
                 String source = in.optString("source", "");
                 if (name.isEmpty()) { HttpResponse.sendError(out, 400, "name required"); return true; }
@@ -111,11 +115,6 @@ public class AutomationApiHandler {
         o.put("triggers", new JSONArray(Automation.INSTANCE.triggerTypesList()));
         o.put("scenarios", new JSONArray(Automation.INSTANCE.listScenarios()));
         return o;
-    }
-
-    private static JSONObject parse(String body) {
-        if (body == null || body.trim().isEmpty()) return new JSONObject();
-        try { return new JSONObject(body); } catch (Exception e) { return new JSONObject(); }
     }
 
     private static String queryParam(String query, String key) {

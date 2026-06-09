@@ -23,6 +23,13 @@ class ScriptHost(
     /** Set by ScriptEngine; receives each on()/scenario() registration. */
     lateinit var registrar: (String, Function) -> Unit
 
+    /**
+     * True while a scenario file is being evaluated (load time). Actions are refused during load so
+     * top-level `vehicle.*()` calls cannot actuate at init/reload/save - scenarios may only act from
+     * inside on()/scenario() handlers, which run during dispatch (gated by enabled + dry-run).
+     */
+    @Volatile var loading: Boolean = false
+
     fun register(type: String?, fn: Function?) {
         if (type.isNullOrBlank() || fn == null) return
         registrar(type, fn)
@@ -44,6 +51,10 @@ class ScriptHost(
     /** The only path from JS to vehicle actuation. Enforces trunk-block, dry-run, and audit. */
     fun vehicleCall(action: String?, args: Map<String, Any?> = emptyMap()): ActionResult {
         val a = action ?: return ActionResult(false, "null action")
+        if (loading) {
+            audit.record(AuditEntry(clock(), "blocked", "action at load time refused: $a"))
+            return ActionResult(false, "actions are only allowed inside on()/scenario() handlers")
+        }
         if (a.contains("trunk", ignoreCase = true)) {
             audit.record(AuditEntry(clock(), "blocked", "trunk action refused: $a"))
             return ActionResult(false, "trunk actions are not allowed")
