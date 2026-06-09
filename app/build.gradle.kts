@@ -408,6 +408,9 @@ dependencies {
     implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
     implementation("org.eclipse.paho:org.eclipse.paho.mqttv5.client:1.2.5")
 
+    // JS automation engine: sandboxed scenario runtime (pure-Java, no NDK).
+    implementation("org.mozilla:rhino:1.7.14")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

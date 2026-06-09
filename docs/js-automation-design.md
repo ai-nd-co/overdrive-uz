@@ -5,7 +5,51 @@ scenarios that react to triggers (vehicle wakes up, manual activate, door, charg
 and perform vehicle actions (lock, close windows, flash, climate, ...). This is the one
 capability Overdrive does not already have, and it is our differentiator.
 
-Status: DESIGN. Implementation (step 3) starts after the app builds green (step 1).
+Status: P1 IMPLEMENTED (engine + 2 triggers + safety + unit tests, wired into the daemon).
+P2/P3 (REST CRUD + web editor, more triggers/actions) are still to do.
+
+## P1 - what is implemented
+
+Package `com.overdrive.app.automation` (Android-free testable core + thin Android adapters):
+
+| File | Role |
+|------|------|
+| `Contracts.kt` | `Trigger`, `Triggers`, `ActionResult`, and the `VehicleActionSink` / `StateProvider` / `Notifier` / `AuditLog` interfaces (no Android, so the core is unit-testable) |
+| `ScriptEngine.kt` | Rhino sandbox: interpreter mode, `ClassShutter` denying all non-automation Java classes, instruction-observer time budget; loads scenarios + dispatches triggers |
+| `ScriptHost.kt` | The single `__host` bridge injected into JS; enforces trunk-block, dry-run, and audit on every action |
+| `AutomationEngine.kt` | Orchestrator: enabled / dry-run gates (disabled by default), fire(trigger) |
+| `RouterVehicleActionSink.kt` | Maps actions to `VehicleCommandRouter` commands (lock/unlock/windows-close-all/flash/climate-on/off); trunk never mapped |
+| `AndroidAdapters.kt` | `DaemonStateProvider` (accOn/sentry via AccMonitor), `FileAuditLog`, `LogNotifier` |
+| `Automation.kt` | Process facade: `init()` loads scenarios + reads flag files; `onAccEdge()` (deduped), `activate()` |
+| `AutomationEngineTest.kt` | 9 JVM unit tests: dispatch, scenario-spec form, disabled-by-default, dry-run, trunk-block, state-gated action, sandbox denies java access, runaway script time-boxed, notify audited |
+
+Wired into `CameraDaemon`: `Automation.init(...)` + `activate()` at daemon startup, and
+`Automation.onAccEdge(accIsOff)` right after the ACC dispatch commit point - so a real ACC
+ON fires `vehicle.wake` and ACC OFF fires `vehicle.sleep`.
+
+Triggers live now: `vehicle.wake`, `vehicle.sleep`, `app.activate`.
+Actions live now: `vehicle.lock/unlock/closeWindows/flash/climateOn/climateOff`; `notify`, `log`; `state.accOn`, `state.sentry`.
+
+## How to run it on the car (P1, no UI yet)
+
+Scenarios are plain `.js` files the daemon loads from `/data/local/tmp/overdrive/scenarios/`.
+
+1. Push one or more scenario files there:
+   `adb push my-scenario.js /data/local/tmp/overdrive/scenarios/`
+2. Arm the engine (safe default is OFF). Create an empty flag file:
+   `adb shell touch /data/local/tmp/overdrive/scenarios/enabled`
+3. It stays in DRY-RUN (audited, no actuation) until you go live:
+   `adb shell touch /data/local/tmp/overdrive/scenarios/live`
+4. Restart the daemon (or wait for its respawn) so `init()` re-reads the dir + flags.
+5. Watch what scenarios do: `adb shell cat /data/local/tmp/overdrive/scenarios/audit.log`
+
+Safe posture: with neither flag present the engine loads scenarios but fires nothing; with
+`enabled` only, it runs scenarios in dry-run (audit shows `dry-run: <action>`); add `live` to
+actually actuate. Trunk is never reachable from JS.
+
+---
+
+## Original design
 
 ## Why this fits Overdrive cleanly
 

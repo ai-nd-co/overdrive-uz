@@ -538,6 +538,18 @@ public class CameraDaemon {
             } catch (Throwable ignored) {}
         }
 
+        // JS automation engine: load scenarios + arm triggers. Safe default is disabled +
+        // dry-run; the owner arms it with empty `enabled` / `live` flag files in the dir.
+        // app.activate fires once here ("the app/daemon was activated"); it is a no-op while
+        // disabled. ACC edges are fired from onAccStateChanged below.
+        try {
+            com.overdrive.app.automation.Automation.INSTANCE.init(
+                new java.io.File("/data/local/tmp/overdrive/scenarios"));
+            com.overdrive.app.automation.Automation.INSTANCE.activate();
+        } catch (Throwable t) {
+            log("automation init failed (non-fatal): " + t.getMessage());
+        }
+
         // Notifications subsystem — registry, push subscriptions, sinks.
         // Lives in this process because HttpServer (where the API routes bind)
         // runs here, and every v1 emit source (surveillance, proximity, tyre)
@@ -3240,6 +3252,14 @@ public class CameraDaemon {
         // Mark this state as fully dispatched only AFTER passing the
         // gpuPipeline-null queuing branch. See dedup comment above.
         lastDispatchedAccIsOff = Boolean.valueOf(accIsOff);
+
+        // JS automation: fire vehicle.wake / vehicle.sleep on a real ACC edge. Idempotent
+        // (Automation dedups repeat edges itself), so the init-race re-entry is harmless.
+        try {
+            com.overdrive.app.automation.Automation.INSTANCE.onAccEdge(accIsOff);
+        } catch (Throwable t) {
+            log("automation acc-edge fire failed (non-fatal): " + t.getMessage());
+        }
 
         log("ACC state changed: " + (accIsOff ? "OFF (entering sentry)" : "ON (exiting sentry)"));
         
