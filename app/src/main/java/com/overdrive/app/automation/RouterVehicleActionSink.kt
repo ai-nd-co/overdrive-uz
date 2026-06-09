@@ -25,8 +25,18 @@ class RouterVehicleActionSink(
             "climate-off" -> VehicleCommandRouter.ClimateOffCommand()
             "sunroof" -> VehicleCommandRouter.SunroofCommand(panelCommand(args["action"]) ?: return ActionResult(false, "sunroof needs action open|close|stop"))
             "sunshade" -> VehicleCommandRouter.SunshadeCommand(panelCommand(args["action"]) ?: return ActionResult(false, "sunshade needs action open|close|stop"))
-            "climate-temp" -> VehicleCommandRouter.ClimateSetTempCommand(0, (args["tempC"] as? Number)?.toDouble() ?: defaultTempC)
-            "climate-fan" -> VehicleCommandRouter.ClimateSetFanCommand((args["level"] as? Number)?.toInt() ?: return ActionResult(false, "climate-fan needs level 0..7"))
+            "climate-temp" -> {
+                val t = (args["tempC"] as? Number)?.toDouble() ?: defaultTempC
+                if (!t.isFinite() || t < 16.0 || t > 33.0) return ActionResult(false, "climate-temp needs 16..33 C")
+                VehicleCommandRouter.ClimateSetTempCommand(0, t)
+            }
+            "climate-fan" -> {
+                val l = (args["level"] as? Number)?.toDouble()
+                if (l == null || !l.isFinite() || l < 0.0 || l > 7.0 || l != Math.floor(l)) {
+                    return ActionResult(false, "climate-fan needs integer level 0..7")
+                }
+                VehicleCommandRouter.ClimateSetFanCommand(l.toInt())
+            }
             "lights" -> VehicleCommandRouter.LightsCommand(args["on"] as? Boolean ?: true)
             else -> return ActionResult(false, "unknown action: $action")
         }

@@ -85,13 +85,30 @@ class AutomationEngineTest {
     }
 
     @Test
-    fun trunkActionIsBlockedEvenIfCalledDirectly() {
-        val (eng, sink, audit) = rig()
-        // bypass the curated vehicle object and hit the host bridge directly
-        eng.load("s", "on('app.activate', function(){ __host.vehicleCall('trunk-open'); });")
-        eng.fire(Triggers.APP_ACTIVATE)
+    fun trunkActionIsBlockedAtHost() {
+        val sink = RecordingSink()
+        val audit = MemAudit()
+        val host = ScriptHost(sink, FixedState(emptyMap()), CapturingNotifier(), audit, dryRun = false) { 1L }
+        val r = host.vehicleCall("trunk-open")
+        assertFalse(r.ok)
         assertTrue(sink.calls.isEmpty())
         assertTrue(audit.kinds().contains("blocked"))
+    }
+
+    @Test
+    fun sandboxExposesNoHostOrPackagesEscape() {
+        // __host is no longer injected, and safe standard objects omit Packages/java, so any
+        // attempt to reach them throws (caught + logged) and actuates nothing.
+        val (eng, sink, audit) = rig()
+        eng.load("s", "on('app.activate', function(){ __host.vehicleCall('lock'); });")
+        eng.fire(Triggers.APP_ACTIVATE)
+        assertTrue(sink.calls.isEmpty())
+        assertTrue(audit.details().contains("scenario error"))
+
+        val (eng2, sink2, _) = rig()
+        eng2.load("s", "on('app.activate', function(){ Packages.com.overdrive.app.automation.Automation; });")
+        eng2.fire(Triggers.APP_ACTIVATE)
+        assertTrue(sink2.calls.isEmpty())
     }
 
     @Test

@@ -1,17 +1,20 @@
 package com.overdrive.app.automation
 
 import java.io.File
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
- * Process-wide facade the daemon and the HTTP API talk to.
+ * Process-wide facade the daemon and HTTP API talk to.
  *
- * init() wires the real adapters and loads scenario files. The enabled / dry-run state is
- * persisted as flag files in the scenarios dir (`enabled`, `live`) so it survives a daemon
- * restart and can be toggled with plain adb. The REST handler drives the same flags + CRUD.
+ * Concurrency: the Rhino engine has a single shared scope and is NOT internally synchronized, so
+ * EVERY engine operation (load, dispatch, reload, enable/dry-run toggle, scenario CRUD) is funneled
+ * onto one dedicated single-thread worker. Trigger sources (ACC, door, charge, battery, schedule)
+ * submit fire-and-forget so they never block the daemon; the HTTP API submits and waits for a result.
  *
- * Safe defaults: with no flags the engine loads scenarios but fires nothing; `enabled` alone
- * runs them in dry-run (audited, no actuation); add `live` to actually actuate. Trunk is never
- * reachable from JS.
+ * Safety: enabled and dry-run are read live at actuation time, so toggling Live off takes effect for
+ * the next dispatch. Defaults are disabled + dry-run (flag files `enabled` / `live` in the dir).
  */
 object Automation {
 
@@ -22,30 +25,80 @@ object Automation {
     @Volatile private var charging: Boolean = false
     @Volatile private var schedulerStarted: Boolean = false
 
+    private val worker by lazy {
+        Executors.newSingleThreadExecutor { r -> Thread(r, "automation-worker").apply { isDaemon = true } }
+    }
     private val scheduler by lazy {
-        java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
-            Thread(r, "automation-schedule").apply { isDaemon = true }
-        }
+        Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "automation-schedule").apply { isDaemon = true } }
+    }
+
+    // No-op deps used only to syntax/registration-validate a scenario in a throwaway engine.
+    private val noopAudit = object : AuditLog { override fun record(entry: AuditEntry) {} }
+    private val noopNotifier = object : Notifier { override fun notify(message: String) {} }
+    private val emptyState = object : StateProvider { override fun snapshot() = emptyMap<String, Any?>() }
+    private val noopSink = object : VehicleActionSink {
+        override fun execute(action: String, args: Map<String, Any?>) = ActionResult(true, "noop")
     }
 
     @JvmOverloads
-    @Synchronized
     fun init(
         scenariosDir: File,
         enabled: Boolean = false,
         dryRun: Boolean = true,
         log: (String) -> Unit = { println(it) },
-    ): AutomationEngine {
-        engine?.let { return it }
+    ) {
+        if (engine != null) return
         dir = scenariosDir
         logger = log
-        // Honor explicit init args by seeding the flag files (flags are the source of truth).
         if (enabled) toggleFlag(File(scenariosDir, FLAG_ENABLED), true)
         if (!dryRun) toggleFlag(File(scenariosDir, FLAG_LIVE), true)
-        val eng = build(scenariosDir, log).also { engine = it }
+        onWorker(15_000, Unit) { engine = buildInternal(scenariosDir) }
         startScheduler()
+    }
+
+    // ---- worker plumbing ----
+
+    private fun <T> onWorker(timeoutMs: Long, default: T, block: () -> T): T = runCatching {
+        worker.submit(Callable { block() }).get(timeoutMs, TimeUnit.MILLISECONDS)
+    }.getOrElse { logger("automation worker op failed: ${it.message}"); default }
+
+    private fun async(block: () -> Unit) {
+        runCatching {
+            worker.execute { runCatching(block).onFailure { logger("automation async failed: ${it.message}") } }
+        }
+    }
+
+    // ---- engine build (worker-thread only) ----
+
+    private fun buildInternal(scenariosDir: File): AutomationEngine {
+        val armed = File(scenariosDir, FLAG_ENABLED).exists()
+        val live = File(scenariosDir, FLAG_LIVE).exists()
+        val audit = FileAuditLog(File(scenariosDir, AUDIT_FILE))
+        val host = ScriptHost(RouterVehicleActionSink(), DaemonStateProvider(), LogNotifier(logger), audit, dryRun = !live)
+        val eng = AutomationEngine(ScriptEngine(host), host, audit, enabled = armed)
+        runCatching {
+            scenariosDir.mkdirs()
+            scenariosDir.listFiles { f -> f.isFile && f.name.endsWith(".js") }
+                ?.sortedBy { it.name }
+                ?.forEach { f ->
+                    val src = runCatching { f.readText() }.getOrNull()
+                    when {
+                        src == null -> logger("scenario read failed ${f.name}")
+                        !validates(src) -> logger("scenario invalid, skipped: ${f.name}")
+                        else -> runCatching { eng.load(f.name, src) }
+                            .onFailure { logger("scenario load failed ${f.name}: ${it.message}") }
+                    }
+                }
+        }
+        logger("automation built: enabled=$armed dryRun=${!live} triggers=${eng.triggerTypes}")
         return eng
     }
+
+    /** True if the source loads (registers) without throwing, in an isolated throwaway engine. */
+    private fun validates(source: String): Boolean = runCatching {
+        ScriptEngine(ScriptHost(noopSink, emptyState, noopNotifier, noopAudit, dryRun = true)).load("validate", source)
+        true
+    }.getOrDefault(false)
 
     /** Fires SCHEDULE_TICK periodically, but only while armed and a scenario actually listens. */
     private fun startScheduler() {
@@ -53,98 +106,64 @@ object Automation {
         schedulerStarted = true
         runCatching {
             scheduler.scheduleWithFixedDelay({
-                runCatching {
-                    val e = engine
-                    if (e != null && e.enabled && e.triggerTypes.contains(Triggers.SCHEDULE_TICK)) {
-                        fire(Triggers.SCHEDULE_TICK, emptyMap())
-                    }
+                val e = engine
+                if (e != null && e.enabled && e.triggerTypes.contains(Triggers.SCHEDULE_TICK)) {
+                    async { engine?.fire(Trigger(Triggers.SCHEDULE_TICK, emptyMap(), System.currentTimeMillis())) }
                 }
-            }, SCHEDULE_PERIOD_SEC, SCHEDULE_PERIOD_SEC, java.util.concurrent.TimeUnit.SECONDS)
+            }, SCHEDULE_PERIOD_SEC, SCHEDULE_PERIOD_SEC, TimeUnit.SECONDS)
         }
     }
 
-    @Synchronized
-    fun reload(): AutomationEngine? {
-        val d = dir ?: return null
-        return build(d, logger).also { engine = it }
-    }
-
-    private fun build(scenariosDir: File, log: (String) -> Unit): AutomationEngine {
-        val armed = File(scenariosDir, FLAG_ENABLED).exists()
-        val live = File(scenariosDir, FLAG_LIVE).exists()
-        val audit = FileAuditLog(File(scenariosDir, AUDIT_FILE))
-        val host = ScriptHost(RouterVehicleActionSink(), DaemonStateProvider(), LogNotifier(log), audit, dryRun = !live)
-        val eng = AutomationEngine(ScriptEngine(host), host, audit, enabled = armed)
-        runCatching {
-            scenariosDir.mkdirs()
-            scenariosDir.listFiles { f -> f.isFile && f.name.endsWith(".js") }
-                ?.sortedBy { it.name }
-                ?.forEach { f ->
-                    runCatching { eng.load(f.name, f.readText()) }
-                        .onFailure { log("scenario load failed ${f.name}: ${it.message}") }
-                }
-        }
-        log("automation built: enabled=$armed dryRun=${!live} triggers=${eng.triggerTypes}")
-        return eng
-    }
-
-    // ---- triggers ----
+    // ---- triggers (fire-and-forget on the worker) ----
 
     /** Single idempotent entry for ACC edges (accIsOff: true = sleep, false = wake). */
-    @Synchronized
     fun onAccEdge(accIsOff: Boolean) {
-        if (lastAccOff == accIsOff) return
-        lastAccOff = accIsOff
-        if (accIsOff) engine?.fire(Triggers.VEHICLE_SLEEP) else engine?.fire(Triggers.VEHICLE_WAKE)
+        synchronized(this) {
+            if (lastAccOff == accIsOff) return
+            lastAccOff = accIsOff
+        }
+        async { engine?.fire(if (accIsOff) Triggers.VEHICLE_SLEEP else Triggers.VEHICLE_WAKE) }
     }
 
-    fun onVehicleWake() { engine?.fire(Triggers.VEHICLE_WAKE) }
-    fun onVehicleSleep() { engine?.fire(Triggers.VEHICLE_SLEEP) }
-    fun activate() { engine?.fire(Triggers.APP_ACTIVATE) }
+    fun onVehicleWake() = async { engine?.fire(Triggers.VEHICLE_WAKE) }
+    fun onVehicleSleep() = async { engine?.fire(Triggers.VEHICLE_SLEEP) }
+    fun activate() = async { engine?.fire(Triggers.APP_ACTIVATE) }
 
-    /** Manually fire a trigger (for the "test" button in the UI). Respects enabled/dry-run. */
-    fun fireManual(type: String): Int = engine?.fire(type) ?: 0
+    fun onDoorEvent(opened: Boolean, area: Int) = async {
+        engine?.fire(Trigger(if (opened) Triggers.DOOR_OPEN else Triggers.DOOR_CLOSE, mapOf("area" to area), System.currentTimeMillis()))
+    }
 
-    /** Fire a trigger with a payload (used by the event hooks below). */
-    fun fire(type: String, payload: Map<String, Any?>): Int =
-        engine?.fire(Trigger(type, payload, System.currentTimeMillis())) ?: 0
-
-    /** Door edge from DoorEventNotifier (area = BYD bodywork area constant). */
-    fun onDoorEvent(opened: Boolean, area: Int): Int =
-        fire(if (opened) Triggers.DOOR_OPEN else Triggers.DOOR_CLOSE, mapOf("area" to area))
-
-    /** Charge edge from ChargingEventNotifier. Also updates the `charging` state field. */
-    fun onChargeEvent(started: Boolean): Int {
+    fun onChargeEvent(started: Boolean) {
         charging = started
-        return fire(if (started) Triggers.CHARGE_START else Triggers.CHARGE_STOP, emptyMap())
+        async { engine?.fire(if (started) Triggers.CHARGE_START else Triggers.CHARGE_STOP) }
     }
 
-    /** Low 12V battery from BatteryPowerMonitor. */
-    fun onBatteryLow(voltage: Double): Int = fire(Triggers.BATTERY_LOW, mapOf("voltage" to voltage))
+    fun onBatteryLow(voltage: Double) = async {
+        engine?.fire(Trigger(Triggers.BATTERY_LOW, mapOf("voltage" to voltage), System.currentTimeMillis()))
+    }
 
     fun isCharging(): Boolean = charging
 
-    // ---- state (for the REST API / UI) ----
+    /** Manually fire a trigger (UI test button). Runs on the worker; returns handlers run. */
+    fun fireManual(type: String): Int = onWorker(5_000, 0) { engine?.fire(type) ?: 0 }
+
+    // ---- state / toggles ----
 
     fun isEnabled(): Boolean = engine?.enabled ?: false
     fun isDryRun(): Boolean = engine?.dryRun ?: true
     fun triggerTypesList(): List<String> = engine?.triggerTypes?.toList() ?: emptyList()
 
-    @Synchronized
-    fun setEnabled(enabled: Boolean) {
-        val d = dir ?: return
-        toggleFlag(File(d, FLAG_ENABLED), enabled)
-        reload()
+    fun setEnabled(enabled: Boolean) = onWorker(2_000, Unit) {
+        engine?.enabled = enabled
+        dir?.let { toggleFlag(File(it, FLAG_ENABLED), enabled) }
     }
 
-    @Synchronized
-    fun setDryRun(dryRun: Boolean) {
-        val d = dir ?: return
-        toggleFlag(File(d, FLAG_LIVE), !dryRun) // `live` present means NOT dry-run
-        reload()
+    fun setDryRun(dryRun: Boolean) = onWorker(2_000, Unit) {
+        engine?.dryRun = dryRun
+        dir?.let { toggleFlag(File(it, FLAG_LIVE), !dryRun) }
     }
 
-    // ---- scenario CRUD ----
+    // ---- scenario CRUD (worker-serialized; rebuild keeps handlers consistent) ----
 
     fun listScenarios(): List<String> {
         val d = dir ?: return emptyList()
@@ -156,20 +175,26 @@ object Automation {
         return if (f.isFile) runCatching { f.readText() }.getOrNull() else null
     }
 
-    @Synchronized
-    fun saveScenario(name: String, source: String): Boolean {
-        val d = dir ?: return false
-        val f = safeFile(name) ?: return false
-        return runCatching { d.mkdirs(); f.writeText(source); reload(); true }.getOrDefault(false)
+    /** Returns false (UI shows an error) if the name is invalid or the source fails to load. */
+    fun saveScenario(name: String, source: String): Boolean = onWorker(5_000, false) {
+        val d = dir
+        val f = safeFile(name)
+        if (d == null || f == null || !validates(source)) false
+        else runCatching { d.mkdirs(); f.writeText(source); engine = buildInternal(d); true }.getOrDefault(false)
     }
 
-    @Synchronized
-    fun deleteScenario(name: String): Boolean {
-        val f = safeFile(name) ?: return false
-        val ok = runCatching { !f.exists() || f.delete() }.getOrDefault(false)
-        if (ok) reload()
-        return ok
+    fun deleteScenario(name: String): Boolean = onWorker(5_000, false) {
+        val d = dir
+        val f = safeFile(name)
+        if (d == null || f == null) false
+        else {
+            val ok = runCatching { !f.exists() || f.delete() }.getOrDefault(false)
+            if (ok) engine = buildInternal(d)
+            ok
+        }
     }
+
+    fun reload() = onWorker(5_000, Unit) { dir?.let { engine = buildInternal(it) } }
 
     fun readAudit(maxLines: Int): List<String> {
         val d = dir ?: return emptyList()

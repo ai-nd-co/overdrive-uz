@@ -80,8 +80,11 @@ public class AutomationApiHandler {
         }
 
         if (route.equals("/api/automation/fire") && method.equalsIgnoreCase("POST")) {
-            JSONObject in = parse(body);
-            String type = in.optString("type", "app.activate");
+            JSONObject in;
+            try { in = new JSONObject(body == null ? "" : body); }
+            catch (Exception e) { HttpResponse.sendError(out, 400, "invalid JSON body"); return true; }
+            String type = in.optString("type", "");
+            if (type.isEmpty()) { HttpResponse.sendError(out, 400, "type required"); return true; }
             int ran = Automation.INSTANCE.fireManual(type);
             JSONObject o = new JSONObject();
             o.put("ran", ran);

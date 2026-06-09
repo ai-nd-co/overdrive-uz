@@ -14,12 +14,16 @@ class DaemonStateProvider : StateProvider {
     }
 }
 
-/** Append-only audit log to a file under the automation dir. Fail-safe (never throws). */
-class FileAuditLog(private val file: File) : AuditLog {
+/** Append-only audit log, capped by size (trims oldest half when exceeded). Fail-safe. */
+class FileAuditLog(private val file: File, private val maxBytes: Long = 256 * 1024) : AuditLog {
     override fun record(entry: AuditEntry) {
         runCatching {
             file.parentFile?.mkdirs()
             file.appendText("${entry.ts}\t${entry.kind}\t${entry.detail}\n")
+            if (file.length() > maxBytes) {
+                val lines = file.readLines()
+                file.writeText(lines.takeLast(lines.size / 2).joinToString("\n", postfix = "\n"))
+            }
         }
     }
 }

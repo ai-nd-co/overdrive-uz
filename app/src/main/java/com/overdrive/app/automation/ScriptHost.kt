@@ -23,20 +23,6 @@ class ScriptHost(
     /** Set by ScriptEngine; receives each on()/scenario() registration. */
     lateinit var registrar: (String, Function) -> Unit
 
-    /**
-     * Converts a raw action-args value from JS into a Map. ScriptEngine injects a Rhino-aware
-     * converter; the default handles null and plain Maps so the core stays unit-testable without
-     * Rhino on the classpath.
-     */
-    var argConverter: (Any?) -> Map<String, Any?> = { raw ->
-        @Suppress("UNCHECKED_CAST")
-        when (raw) {
-            null -> emptyMap()
-            is Map<*, *> -> raw as Map<String, Any?>
-            else -> emptyMap()
-        }
-    }
-
     fun register(type: String?, fn: Function?) {
         if (type.isNullOrBlank() || fn == null) return
         registrar(type, fn)
@@ -56,14 +42,12 @@ class ScriptHost(
     }
 
     /** The only path from JS to vehicle actuation. Enforces trunk-block, dry-run, and audit. */
-    @JvmOverloads
-    fun vehicleCall(action: String?, rawArgs: Any? = null): ActionResult {
+    fun vehicleCall(action: String?, args: Map<String, Any?> = emptyMap()): ActionResult {
         val a = action ?: return ActionResult(false, "null action")
         if (a.contains("trunk", ignoreCase = true)) {
             audit.record(AuditEntry(clock(), "blocked", "trunk action refused: $a"))
             return ActionResult(false, "trunk actions are not allowed")
         }
-        val args = runCatching { argConverter(rawArgs) }.getOrDefault(emptyMap())
         val argStr = if (args.isEmpty()) "" else " $args"
         if (dryRun) {
             audit.record(AuditEntry(clock(), "dry-run", a + argStr))
