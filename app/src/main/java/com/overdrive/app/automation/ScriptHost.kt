@@ -3,9 +3,9 @@ package com.overdrive.app.automation
 import org.mozilla.javascript.Function
 
 /**
- * The single Java object injected into every scenario scope as `__host`. The JS prelude
- * defines the friendly globals (on, scenario, vehicle, notify, log) in terms of it, so the
- * Java/JS boundary stays tiny and auditable.
+ * Backs the native-function API (on, scenario, vehicle.*, notify, log) that ScriptEngine installs
+ * on the scope. This object is NEVER exposed to scripts; the native functions call into it from
+ * Kotlin, so scripts cannot reflect off it.
  *
  * Every side effect goes through here, which is where the safety rules live:
  *  - trunk actions are refused outright (never exposed, and blocked even if called),

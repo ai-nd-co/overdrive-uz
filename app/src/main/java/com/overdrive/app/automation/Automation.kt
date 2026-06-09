@@ -24,9 +24,12 @@ object Automation {
     @Volatile private var lastAccOff: Boolean? = null
     @Volatile private var charging: Boolean = false
     @Volatile private var schedulerStarted: Boolean = false
+    @Volatile private var workerThread: Thread? = null
 
     private val worker by lazy {
-        Executors.newSingleThreadExecutor { r -> Thread(r, "automation-worker").apply { isDaemon = true } }
+        Executors.newSingleThreadExecutor { r ->
+            Thread(r, "automation-worker").apply { isDaemon = true; workerThread = this }
+        }
     }
     private val scheduler by lazy {
         Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "automation-schedule").apply { isDaemon = true } }
@@ -58,9 +61,15 @@ object Automation {
 
     // ---- worker plumbing ----
 
-    private fun <T> onWorker(timeoutMs: Long, default: T, block: () -> T): T = runCatching {
-        worker.submit(Callable { block() }).get(timeoutMs, TimeUnit.MILLISECONDS)
-    }.getOrElse { logger("automation worker op failed: ${it.message}"); default }
+    private fun <T> onWorker(timeoutMs: Long, default: T, block: () -> T): T {
+        // Fast path: if already on the worker thread, run inline (prevents any self-deadlock).
+        if (Thread.currentThread() === workerThread) {
+            return runCatching(block).getOrElse { logger("automation inline op failed: ${it.javaClass.simpleName} ${it.message}"); default }
+        }
+        return runCatching {
+            worker.submit(Callable { block() }).get(timeoutMs, TimeUnit.MILLISECONDS)
+        }.getOrElse { logger("automation worker op timed out/failed: ${it.javaClass.simpleName} ${it.message}"); default }
+    }
 
     private fun async(block: () -> Unit) {
         runCatching {

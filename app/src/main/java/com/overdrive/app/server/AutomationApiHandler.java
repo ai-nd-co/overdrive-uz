@@ -62,7 +62,7 @@ public class AutomationApiHandler {
                 String source = in.optString("source", "");
                 if (name.isEmpty()) { HttpResponse.sendError(out, 400, "name required"); return true; }
                 if (!Automation.INSTANCE.saveScenario(name, source)) {
-                    HttpResponse.sendError(out, 400, "invalid scenario name (must be a .js basename)");
+                    HttpResponse.sendError(out, 400, "save failed: name must be a .js basename and the script must load without error");
                     return true;
                 }
                 HttpResponse.sendJson(out, stateJson().toString());

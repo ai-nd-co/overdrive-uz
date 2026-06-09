@@ -166,6 +166,14 @@ class AutomationEngineTest {
     }
 
     @Test
+    fun nativeFunctionsSupportCallApplyBind() {
+        val (eng, sink, _) = rig()
+        eng.load("s", "on('app.activate', function(){ vehicle.lock.call(null); vehicle.flash.apply(null, []); var f = vehicle.unlock.bind(null); f(); });")
+        eng.fire(Triggers.APP_ACTIVATE)
+        assertEquals(listOf("lock", "flash", "unlock"), sink.calls)
+    }
+
+    @Test
     fun notifyIsAudited() {
         val (eng, _, audit) = rig()
         eng.load("s", "on('app.activate', function(){ notify('hello'); });")

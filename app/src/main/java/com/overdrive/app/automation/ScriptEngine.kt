@@ -99,25 +99,25 @@ class ScriptEngine(
 
     /** Install the native-function API onto the scope. No Java object is exposed to scripts. */
     private fun installApi(cx: Context, scope: ScriptableObject) {
-        ScriptableObject.putProperty(scope, "on", fn { _, args ->
+        ScriptableObject.putProperty(scope, "on", fn(scope) { _, args ->
             val type = (args.getOrNull(0) as? CharSequence)?.toString()
             val handler = args.getOrNull(1) as? Function
             if (type != null && handler != null) host.register(type, handler)
             Undefined.instance
         })
-        ScriptableObject.putProperty(scope, "scenario", fn { _, args ->
+        ScriptableObject.putProperty(scope, "scenario", fn(scope) { _, args ->
             val spec = args.getOrNull(0) as? Scriptable ?: return@fn Undefined.instance
             val whenT = (ScriptableObject.getProperty(spec, "when") as? CharSequence)?.toString()
             val run = ScriptableObject.getProperty(spec, "run") as? Function
             if (whenT != null && run != null) host.register(whenT, run)
             Undefined.instance
         })
-        ScriptableObject.putProperty(scope, "log", fn { _, args -> host.log(str(args.getOrNull(0))); Undefined.instance })
-        ScriptableObject.putProperty(scope, "notify", fn { _, args -> host.notify(str(args.getOrNull(0))); Undefined.instance })
+        ScriptableObject.putProperty(scope, "log", fn(scope) { _, args -> host.log(str(args.getOrNull(0))); Undefined.instance })
+        ScriptableObject.putProperty(scope, "notify", fn(scope) { _, args -> host.notify(str(args.getOrNull(0))); Undefined.instance })
 
         val vehicle = cx.newObject(scope)
         fun act(name: String, action: String, argBuilder: (Array<out Any?>) -> Map<String, Any?>) {
-            ScriptableObject.putProperty(vehicle, name, fn { c, args ->
+            ScriptableObject.putProperty(vehicle, name, fn(scope) { c, args ->
                 resultToJs(c, scope, host.vehicleCall(action, argBuilder(args)))
             })
         }
@@ -135,9 +135,15 @@ class ScriptEngine(
         ScriptableObject.putProperty(scope, "vehicle", vehicle)
     }
 
-    private fun fn(f: (Context, Array<out Any?>) -> Any?): BaseFunction = object : BaseFunction() {
-        override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable, args: Array<out Any?>): Any =
-            f(cx, args) ?: Undefined.instance
+    private fun fn(scope: Scriptable, f: (Context, Array<out Any?>) -> Any?): BaseFunction {
+        val func = object : BaseFunction() {
+            // thisObj is null for `f.call(null)`, so all platform params must be nullable.
+            override fun call(cx: Context, s: Scriptable?, thisObj: Scriptable?, args: Array<out Any?>?): Any =
+                f(cx, args ?: emptyArray()) ?: Undefined.instance
+        }
+        // Canonical wiring of the Function prototype + parent scope so call/apply/bind work.
+        org.mozilla.javascript.ScriptRuntime.setFunctionProtoAndParent(func, scope)
+        return func
     }
 
     private fun resultToJs(cx: Context, scope: Scriptable, r: ActionResult): Scriptable {

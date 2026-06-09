@@ -26,8 +26,8 @@ class RouterVehicleActionSink(
             "sunroof" -> VehicleCommandRouter.SunroofCommand(panelCommand(args["action"]) ?: return ActionResult(false, "sunroof needs action open|close|stop"))
             "sunshade" -> VehicleCommandRouter.SunshadeCommand(panelCommand(args["action"]) ?: return ActionResult(false, "sunshade needs action open|close|stop"))
             "climate-temp" -> {
-                val t = (args["tempC"] as? Number)?.toDouble() ?: defaultTempC
-                if (!t.isFinite() || t < 16.0 || t > 33.0) return ActionResult(false, "climate-temp needs 16..33 C")
+                val t = (args["tempC"] as? Number)?.toDouble()
+                if (t == null || !t.isFinite() || t < 16.0 || t > 33.0) return ActionResult(false, "climate-temp needs 16..33 C")
                 VehicleCommandRouter.ClimateSetTempCommand(0, t)
             }
             "climate-fan" -> {

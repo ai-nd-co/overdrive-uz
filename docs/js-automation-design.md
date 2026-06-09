@@ -44,7 +44,7 @@ Package `com.overdrive.app.automation` (Android-free testable core + thin Androi
 |------|------|
 | `Contracts.kt` | `Trigger`, `Triggers`, `ActionResult`, and the `VehicleActionSink` / `StateProvider` / `Notifier` / `AuditLog` interfaces (no Android, so the core is unit-testable) |
 | `ScriptEngine.kt` | Rhino sandbox: interpreter mode, `ClassShutter` denying all non-automation Java classes, instruction-observer time budget; loads scenarios + dispatches triggers |
-| `ScriptHost.kt` | The single `__host` bridge injected into JS; enforces trunk-block, dry-run, and audit on every action |
+| `ScriptHost.kt` | Backs the native-function API (not exposed to scripts); enforces trunk-block, dry-run, and audit on every action |
 | `AutomationEngine.kt` | Orchestrator: enabled / dry-run gates (disabled by default), fire(trigger) |
 | `RouterVehicleActionSink.kt` | Maps actions to `VehicleCommandRouter` commands (lock/unlock/windows-close-all/flash/climate-on/off); trunk never mapped |
 | `AndroidAdapters.kt` | `DaemonStateProvider` (accOn/sentry via AccMonitor), `FileAuditLog`, `LogNotifier` |
