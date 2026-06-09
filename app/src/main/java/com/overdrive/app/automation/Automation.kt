@@ -19,6 +19,14 @@ object Automation {
     @Volatile private var dir: File? = null
     @Volatile private var logger: (String) -> Unit = { println(it) }
     @Volatile private var lastAccOff: Boolean? = null
+    @Volatile private var charging: Boolean = false
+    @Volatile private var schedulerStarted: Boolean = false
+
+    private val scheduler by lazy {
+        java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "automation-schedule").apply { isDaemon = true }
+        }
+    }
 
     @JvmOverloads
     @Synchronized
@@ -34,7 +42,25 @@ object Automation {
         // Honor explicit init args by seeding the flag files (flags are the source of truth).
         if (enabled) toggleFlag(File(scenariosDir, FLAG_ENABLED), true)
         if (!dryRun) toggleFlag(File(scenariosDir, FLAG_LIVE), true)
-        return build(scenariosDir, log).also { engine = it }
+        val eng = build(scenariosDir, log).also { engine = it }
+        startScheduler()
+        return eng
+    }
+
+    /** Fires SCHEDULE_TICK periodically, but only while armed and a scenario actually listens. */
+    private fun startScheduler() {
+        if (schedulerStarted) return
+        schedulerStarted = true
+        runCatching {
+            scheduler.scheduleWithFixedDelay({
+                runCatching {
+                    val e = engine
+                    if (e != null && e.enabled && e.triggerTypes.contains(Triggers.SCHEDULE_TICK)) {
+                        fire(Triggers.SCHEDULE_TICK, emptyMap())
+                    }
+                }
+            }, SCHEDULE_PERIOD_SEC, SCHEDULE_PERIOD_SEC, java.util.concurrent.TimeUnit.SECONDS)
+        }
     }
 
     @Synchronized
@@ -78,6 +104,25 @@ object Automation {
 
     /** Manually fire a trigger (for the "test" button in the UI). Respects enabled/dry-run. */
     fun fireManual(type: String): Int = engine?.fire(type) ?: 0
+
+    /** Fire a trigger with a payload (used by the event hooks below). */
+    fun fire(type: String, payload: Map<String, Any?>): Int =
+        engine?.fire(Trigger(type, payload, System.currentTimeMillis())) ?: 0
+
+    /** Door edge from DoorEventNotifier (area = BYD bodywork area constant). */
+    fun onDoorEvent(opened: Boolean, area: Int): Int =
+        fire(if (opened) Triggers.DOOR_OPEN else Triggers.DOOR_CLOSE, mapOf("area" to area))
+
+    /** Charge edge from ChargingEventNotifier. Also updates the `charging` state field. */
+    fun onChargeEvent(started: Boolean): Int {
+        charging = started
+        return fire(if (started) Triggers.CHARGE_START else Triggers.CHARGE_STOP, emptyMap())
+    }
+
+    /** Low 12V battery from BatteryPowerMonitor. */
+    fun onBatteryLow(voltage: Double): Int = fire(Triggers.BATTERY_LOW, mapOf("voltage" to voltage))
+
+    fun isCharging(): Boolean = charging
 
     // ---- state (for the REST API / UI) ----
 
@@ -155,4 +200,5 @@ object Automation {
     private const val FLAG_ENABLED = "enabled"
     private const val FLAG_LIVE = "live"
     private const val AUDIT_FILE = "audit.log"
+    private const val SCHEDULE_PERIOD_SEC = 60L
 }

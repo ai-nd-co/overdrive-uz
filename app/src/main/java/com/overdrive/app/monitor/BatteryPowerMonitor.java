@@ -106,7 +106,14 @@ public class BatteryPowerMonitor extends BaseDeviceMonitor<BatteryPowerData> {
                             log("WARNING: Battery voltage out of valid range (9.0-16.0V): " + voltage + "V");
                         }
                     }
-                    
+
+                    // JS automation: battery.low trigger, fired once on the edge into low.
+                    boolean wasLow = oldData != null && (oldData.isWarning || oldData.isCritical);
+                    boolean isLow = newData.isWarning || newData.isCritical;
+                    if (isLow && !wasLow) {
+                        try { com.overdrive.app.automation.Automation.INSTANCE.onBatteryLow(voltage); } catch (Throwable ignored) {}
+                    }
+
                     cachedData.set(newData);
 
                     // Fan out to BatteryVoltageMonitorV2 (acc_sentry-process MCU

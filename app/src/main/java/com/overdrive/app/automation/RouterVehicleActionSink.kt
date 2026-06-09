@@ -23,6 +23,11 @@ class RouterVehicleActionSink(
             "flash" -> VehicleCommandRouter.FlashLightsCommand()
             "climate-on" -> VehicleCommandRouter.ClimateOnCommand((args["tempC"] as? Number)?.toDouble() ?: defaultTempC)
             "climate-off" -> VehicleCommandRouter.ClimateOffCommand()
+            "sunroof" -> VehicleCommandRouter.SunroofCommand(panelCommand(args["action"]) ?: return ActionResult(false, "sunroof needs action open|close|stop"))
+            "sunshade" -> VehicleCommandRouter.SunshadeCommand(panelCommand(args["action"]) ?: return ActionResult(false, "sunshade needs action open|close|stop"))
+            "climate-temp" -> VehicleCommandRouter.ClimateSetTempCommand(0, (args["tempC"] as? Number)?.toDouble() ?: defaultTempC)
+            "climate-fan" -> VehicleCommandRouter.ClimateSetFanCommand((args["level"] as? Number)?.toInt() ?: return ActionResult(false, "climate-fan needs level 0..7"))
+            "lights" -> VehicleCommandRouter.LightsCommand(args["on"] as? Boolean ?: true)
             else -> return ActionResult(false, "unknown action: $action")
         }
         return try {
@@ -32,5 +37,13 @@ class RouterVehicleActionSink(
         } catch (e: Exception) {
             ActionResult(false, "router error: ${e.message}")
         }
+    }
+
+    /** Map an open/close/stop action string to the BYD panel command int (1/2/3). */
+    private fun panelCommand(v: Any?): Int? = when ((v as? String)?.lowercase()) {
+        "open" -> 1
+        "close" -> 2
+        "stop" -> 3
+        else -> null
     }
 }

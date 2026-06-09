@@ -53,6 +53,30 @@ class ScriptEngine(
 
     init {
         host.registrar = { type, fn -> handlers.getOrPut(type) { mutableListOf() }.add(fn) }
+        host.argConverter = { raw -> jsToMap(raw) }
+    }
+
+    private fun jsToMap(raw: Any?): Map<String, Any?> {
+        if (raw == null || raw is org.mozilla.javascript.Undefined) return emptyMap()
+        if (raw is Map<*, *>) {
+            @Suppress("UNCHECKED_CAST")
+            return raw as Map<String, Any?>
+        }
+        if (raw is Scriptable) {
+            val out = LinkedHashMap<String, Any?>()
+            for (id in ScriptableObject.getPropertyIds(raw)) {
+                val key = id?.toString() ?: continue
+                out[key] = unwrap(ScriptableObject.getProperty(raw, key))
+            }
+            return out
+        }
+        return emptyMap()
+    }
+
+    private fun unwrap(v: Any?): Any? = when {
+        v is org.mozilla.javascript.Wrapper -> v.unwrap()
+        v === Scriptable.NOT_FOUND || v is org.mozilla.javascript.Undefined -> null
+        else -> v
     }
 
     /** Evaluate a scenario source once; its on()/scenario() calls register handlers. */
@@ -116,7 +140,12 @@ class ScriptEngine(
               closeWindows: function () { return __host.vehicleCall('windows-close-all'); },
               flash:        function () { return __host.vehicleCall('flash'); },
               climateOn:    function () { return __host.vehicleCall('climate-on'); },
-              climateOff:   function () { return __host.vehicleCall('climate-off'); }
+              climateOff:   function () { return __host.vehicleCall('climate-off'); },
+              sunroof:      function (action) { return __host.vehicleCall('sunroof', { action: action }); },
+              sunshade:     function (action) { return __host.vehicleCall('sunshade', { action: action }); },
+              climateTemp:  function (c) { return __host.vehicleCall('climate-temp', { tempC: c }); },
+              climateFan:   function (level) { return __host.vehicleCall('climate-fan', { level: level }); },
+              lights:       function (on) { return __host.vehicleCall('lights', { on: on }); }
             };
         """.trimIndent()
     }

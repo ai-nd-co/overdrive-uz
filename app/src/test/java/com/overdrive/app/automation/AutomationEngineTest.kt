@@ -9,8 +9,10 @@ class AutomationEngineTest {
 
     private class RecordingSink : VehicleActionSink {
         val calls = mutableListOf<String>()
+        val argsByAction = mutableMapOf<String, Map<String, Any?>>()
         override fun execute(action: String, args: Map<String, Any?>): ActionResult {
             calls += action
+            argsByAction[action] = args
             return ActionResult(true, "ok")
         }
     }
@@ -121,6 +123,29 @@ class AutomationEngineTest {
         eng.load("s", "on('app.activate', function(){ while (true) {} });")
         eng.fire(Triggers.APP_ACTIVATE) // must return, not hang
         assertTrue("expected a logged time-budget error", audit.details().contains("scenario error"))
+    }
+
+    @Test
+    fun parameterizedActionsPassArgsThrough() {
+        val (eng, sink, _) = rig()
+        eng.load("s", "on('app.activate', function(){ vehicle.sunroof('open'); vehicle.climateFan(5); });")
+        eng.fire(Triggers.APP_ACTIVATE)
+        assertEquals(listOf("sunroof", "climate-fan"), sink.calls)
+        assertEquals("open", sink.argsByAction["sunroof"]?.get("action"))
+        assertEquals(5.0, (sink.argsByAction["climate-fan"]?.get("level") as Number).toDouble(), 0.0)
+    }
+
+    @Test
+    fun triggerPayloadIsReadableInContext() {
+        val (eng, sink, _) = rig()
+        eng.load("s", "on('door.open', function(ctx){ if (ctx.area === 1) vehicle.lock(); });")
+        eng.fire(Trigger(Triggers.DOOR_OPEN, mapOf("area" to 1)))
+        assertEquals(listOf("lock"), sink.calls)
+        // a different area should not match
+        val (eng2, sink2, _) = rig()
+        eng2.load("s", "on('door.open', function(ctx){ if (ctx.area === 1) vehicle.lock(); });")
+        eng2.fire(Trigger(Triggers.DOOR_OPEN, mapOf("area" to 3)))
+        assertTrue(sink2.calls.isEmpty())
     }
 
     @Test

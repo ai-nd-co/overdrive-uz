@@ -89,6 +89,10 @@
         <button data-fire="vehicle.wake">wake</button>
         <button data-fire="vehicle.sleep">sleep</button>
         <button data-fire="app.activate">activate</button>
+        <button data-fire="door.open">door.open</button>
+        <button data-fire="charge.start">charge.start</button>
+        <button data-fire="battery.low">battery.low</button>
+        <button data-fire="schedule.tick">schedule.tick</button>
       </div>
       <p class="hint">Runs handlers now (respects enabled / dry-run).</p>
     </div>
@@ -100,7 +104,9 @@
       <button id="saveBtn" class="primary">Save</button>
     </div>
     <textarea id="editor" spellcheck="false" placeholder="scenario({ when: 'vehicle.wake', run: function(ctx){ /* ... */ } });"></textarea>
-    <p class="hint">API: on(type, fn) / scenario({when, run}); vehicle.lock/unlock/closeWindows/flash/climateOn/climateOff; state.accOn; notify(msg); log(msg).</p>
+    <p class="hint">Triggers: vehicle.wake/sleep, app.activate, door.open/close, charge.start/stop, battery.low, schedule.tick.
+      Actions: vehicle.lock/unlock/closeWindows/flash/climateOn/climateOff, sunroof('open'|'close'|'stop'), sunshade(...),
+      climateTemp(c), climateFan(0..7), lights(true|false). State: state.accOn/sentry/charging/soc. Also notify(msg), log(msg).</p>
     <div>
       <h2>Audit <button id="auditRefresh" style="float:right;padding:3px 8px;font-size:11px;">refresh</button></h2>
       <div class="audit" id="audit"></div>

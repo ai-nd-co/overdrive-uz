@@ -5,9 +5,23 @@ scenarios that react to triggers (vehicle wakes up, manual activate, door, charg
 and perform vehicle actions (lock, close windows, flash, climate, ...). This is the one
 capability Overdrive does not already have, and it is our differentiator.
 
-Status: P1 + P2 IMPLEMENTED. P1 = engine + triggers + safety + unit tests, wired into the
-daemon. P2 = REST API + web editor (manage scenarios, enable/dry-run toggles, manual fire,
-audit view) at `/automation`. P3 (more triggers/actions, richer state) is still to do.
+Status: P1 + P2 + P3 IMPLEMENTED. P1 = engine + triggers + safety + unit tests. P2 = REST
+API + web editor at `/automation`. P3 = more triggers/actions + richer state.
+
+## P3 - what is implemented
+
+- More triggers (wired via direct hooks at the source): `door.open` / `door.close`
+  (DoorEventNotifier), `charge.start` / `charge.stop` (ChargingEventNotifier), `battery.low`
+  (BatteryPowerMonitor, fired once on the edge into low), and `schedule.tick` (a 60s timer in
+  the facade that only fires while armed and a scenario actually listens). Door/charge triggers
+  carry a payload (`ctx.area`, etc.).
+- More actions (parameterized, via an injected JS-args converter so the core stays test-only):
+  `vehicle.sunroof('open'|'close'|'stop')`, `vehicle.sunshade(...)`, `vehicle.climateTemp(c)`,
+  `vehicle.climateFan(0..7)`, `vehicle.lights(true|false)` - all mapped to existing
+  VehicleCommandRouter commands.
+- Richer `state`: `accOn`, `sentry`, `charging`, and `soc` (from SocCutoffMonitor; omitted until
+  first observed).
+- 11 unit tests (added: parameterized-args pass-through, payload-readable-in-context).
 
 ## P2 - what is implemented
 

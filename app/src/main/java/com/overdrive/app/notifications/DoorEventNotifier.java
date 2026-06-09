@@ -108,6 +108,9 @@ public final class DoorEventNotifier {
                     null,
                     data));
         } catch (Throwable ignored) {}
+
+        // JS automation: door.open / door.close trigger.
+        try { com.overdrive.app.automation.Automation.INSTANCE.onDoorEvent(opened, area); } catch (Throwable ignored) {}
     }
 
     private static String areaLabel(int area) {

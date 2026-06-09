@@ -194,6 +194,8 @@ public final class ChargingEventNotifier {
     }
 
     private void publishStarted(int stateCode) {
+        // JS automation: charge.start trigger.
+        try { com.overdrive.app.automation.Automation.INSTANCE.onChargeEvent(true); } catch (Throwable ignored) {}
         BydVehicleData snap = BydDataCollector.getInstance().getData();
         double powerKw = (snap != null) ? snap.chargingPowerKw : Double.NaN;
         double socPercent = (snap != null) ? snap.socPercent : Double.NaN;
@@ -225,6 +227,8 @@ public final class ChargingEventNotifier {
     }
 
     private void publishStopped(int stateCode) {
+        // JS automation: charge.stop trigger.
+        try { com.overdrive.app.automation.Automation.INSTANCE.onChargeEvent(false); } catch (Throwable ignored) {}
         BydVehicleData snap = BydDataCollector.getInstance().getData();
         double socPercent = (snap != null) ? snap.socPercent : Double.NaN;
 

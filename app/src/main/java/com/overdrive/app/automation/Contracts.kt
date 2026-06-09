@@ -13,11 +13,17 @@ data class Trigger(
     val ts: Long = 0L,
 )
 
-/** Built-in trigger types. Extend in later phases (door/charge/battery/schedule). */
+/** Built-in trigger types. */
 object Triggers {
     const val VEHICLE_WAKE = "vehicle.wake"
     const val VEHICLE_SLEEP = "vehicle.sleep"
     const val APP_ACTIVATE = "app.activate"
+    const val DOOR_OPEN = "door.open"
+    const val DOOR_CLOSE = "door.close"
+    const val CHARGE_START = "charge.start"
+    const val CHARGE_STOP = "charge.stop"
+    const val BATTERY_LOW = "battery.low"
+    const val SCHEDULE_TICK = "schedule.tick"
 }
 
 /** Result of a single vehicle action, surfaced back to JS as { ok, detail }. */

@@ -45,6 +45,9 @@ public final class SocCutoffMonitor {
     private static volatile long pendingShutdownTriggerAt = 0L;
     private static Object statisticListener;
 
+    /** Last known high-voltage SOC percent, or null if not yet observed. Read by the automation state. */
+    public static Double getLastSocPercent() { return lastSocPercent; }
+
     /**
      * Same-process {@link com.overdrive.app.monitor.BatterySocMonitor} instance.
      * That monitor properly subclasses {@code AbsBYDAutoStatisticListener}
