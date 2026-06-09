@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ID stubs for view references that the public Overdrive "release" left in code after
+  stripping the matching view nodes from their layouts. The host layouts (item_recording.xml,
+  fragment_recordings.xml, fragment_recording_library.xml, and the OEM-dashcam picker dialog)
+  exist, but these specific nodes were removed for the open-source release while the
+  findViewById(R.id.X) call sites remained, which fails Kotlin compilation.
+
+  Declaring them as id resources lets the references resolve so the app builds. At runtime
+  findViewById returns null for these (no inflated view carries the id), so the affected
+  peripheral UI (OEM-dashcam id picker dialog, recording share/badge, place search) is inert
+  in this release. None of it is on the daemon / automation path we build on.
+-->
+<resources>
+    <item name="rgOemDashcamId" type="id" />
+    <item name="tvCurrentOemDashcam" type="id" />
+    <item name="btnSaveOemDashcamId" type="id" />
+    <item name="rbOemDashcam0" type="id" />
+    <item name="rbOemDashcam1" type="id" />
+    <item name="rbOemDashcam2" type="id" />
+    <item name="rbOemDashcam3" type="id" />
+    <item name="rbOemDashcam4" type="id" />
+    <item name="rbOemDashcam5" type="id" />
+    <item name="rbOemDashcamAuto" type="id" />
+    <item name="btnShare" type="id" />
+    <item name="tvTypeBadge" type="id" />
+    <item name="tvEmptyStateBody" type="id" />
+    <item name="btnEmptyClearFilters" type="id" />
+    <item name="btnShareSelected" type="id" />
+    <item name="etPlaceSearch" type="id" />
+    <item name="btnClearPlaceSearch" type="id" />
+    <item name="tvTitleCountBadge" type="id" />
+</resources>
