@@ -69,7 +69,7 @@ class ScriptEngine(
 
     /** Fire a trigger: run every handler registered for its type. Returns how many ran. */
     fun dispatch(trigger: Trigger): Int = inContext { cx, sc ->
-        val fns = handlers[trigger.type] ?: return@inContext 0
+        val fns = handlers[trigger.type]?.toList() ?: return@inContext 0 // snapshot: safe vs mutation
         ScriptableObject.putProperty(sc, "state", mapToJs(cx, sc, host.stateSnapshot()))
         val ctxObj = mapToJs(cx, sc, mapOf("type" to trigger.type, "ts" to trigger.ts) + trigger.payload)
         var ran = 0

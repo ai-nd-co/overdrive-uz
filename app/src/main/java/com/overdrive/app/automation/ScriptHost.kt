@@ -32,6 +32,12 @@ class ScriptHost(
 
     fun register(type: String?, fn: Function?) {
         if (type.isNullOrBlank() || fn == null) return
+        // Registration is a load-time concept. Refuse on()/scenario() from inside a running handler
+        // so a scenario cannot grow the handler set across fires (or mutate the list being dispatched).
+        if (!loading) {
+            audit.record(AuditEntry(clock(), "blocked", "registration ignored outside load: $type"))
+            return
+        }
         registrar(type, fn)
     }
 

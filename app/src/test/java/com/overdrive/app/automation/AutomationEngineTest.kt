@@ -166,6 +166,18 @@ class AutomationEngineTest {
     }
 
     @Test
+    fun runtimeRegistrationIsIgnored() {
+        // A handler that calls on() at dispatch time must not grow the handler set or throw
+        // (no ConcurrentModificationException); the inner registration is refused.
+        val (eng, sink, audit) = rig()
+        eng.load("s", "on('app.activate', function(){ on('app.activate', function(){ vehicle.lock(); }); });")
+        eng.fire(Triggers.APP_ACTIVATE)
+        eng.fire(Triggers.APP_ACTIVATE)
+        assertTrue("inner handler must never register", sink.calls.isEmpty())
+        assertTrue(audit.kinds().contains("blocked"))
+    }
+
+    @Test
     fun topLevelActionsAreBlockedAtLoad() {
         // A scenario file may only actuate from inside on()/scenario() handlers. Top-level
         // vehicle.* must not fire at load time, even with enabled=false + live.

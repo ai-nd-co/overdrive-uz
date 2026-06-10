@@ -33,8 +33,14 @@ public class AutomationApiHandler {
                 JSONObject in;
                 try { in = new JSONObject((body == null || body.trim().isEmpty()) ? "{}" : body); }
                 catch (Exception e) { HttpResponse.sendError(out, 400, "invalid JSON body"); return true; }
-                if (in.has("enabled")) Automation.INSTANCE.setEnabled(in.optBoolean("enabled", Automation.INSTANCE.isEnabled()));
-                if (in.has("dryRun")) Automation.INSTANCE.setDryRun(in.optBoolean("dryRun", Automation.INSTANCE.isDryRun()));
+                if (in.has("enabled")) {
+                    if (!(in.opt("enabled") instanceof Boolean)) { HttpResponse.sendError(out, 400, "enabled must be a boolean"); return true; }
+                    Automation.INSTANCE.setEnabled(in.getBoolean("enabled"));
+                }
+                if (in.has("dryRun")) {
+                    if (!(in.opt("dryRun") instanceof Boolean)) { HttpResponse.sendError(out, 400, "dryRun must be a boolean"); return true; }
+                    Automation.INSTANCE.setDryRun(in.getBoolean("dryRun"));
+                }
             }
             HttpResponse.sendJson(out, stateJson().toString());
             return true;
@@ -62,9 +68,16 @@ public class AutomationApiHandler {
                 JSONObject in;
                 try { in = new JSONObject(body == null ? "" : body); }
                 catch (Exception e) { HttpResponse.sendError(out, 400, "invalid JSON body"); return true; }
-                String name = in.optString("name", "");
-                String source = in.optString("source", "");
-                if (name.isEmpty()) { HttpResponse.sendError(out, 400, "name required"); return true; }
+                Object nameRaw = in.opt("name");
+                Object sourceRaw = in.opt("source");
+                if (!(nameRaw instanceof String) || ((String) nameRaw).isEmpty()) {
+                    HttpResponse.sendError(out, 400, "name must be a non-empty string"); return true;
+                }
+                if (!(sourceRaw instanceof String)) {
+                    HttpResponse.sendError(out, 400, "source must be a string"); return true;
+                }
+                String name = (String) nameRaw;
+                String source = (String) sourceRaw;
                 if (!Automation.INSTANCE.saveScenario(name, source)) {
                     HttpResponse.sendError(out, 400, "save failed: name must be a .js basename and the script must load without error");
                     return true;
