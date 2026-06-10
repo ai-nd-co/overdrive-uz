@@ -176,6 +176,16 @@ class AutomationEngineTest {
     }
 
     @Test
+    fun actionArgsAreNotStringCoercedAtBoundary() {
+        // A non-string sunroof arg must reach the sink as the raw value (not "123"), so the sink's
+        // string-only check rejects it instead of a stringified value sneaking through as "open".
+        val (eng, sink, _) = rig()
+        eng.load("s", "on('app.activate', function(){ vehicle.sunroof(123); });")
+        eng.fire(Triggers.APP_ACTIVATE)
+        assertEquals(123.0, (sink.argsByAction["sunroof"]?.get("action") as Number).toDouble(), 0.0)
+    }
+
+    @Test
     fun nativeFunctionsSupportCallApplyBind() {
         val (eng, sink, _) = rig()
         eng.load("s", "on('app.activate', function(){ vehicle.lock.call(null); vehicle.flash.apply(null, []); var f = vehicle.unlock.bind(null); f(); });")

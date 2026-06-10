@@ -57,8 +57,12 @@ class RouterVehicleActionSink(
         }
     }
 
-    /** Map an open/close/stop action string to the BYD panel command int (1/2/3). */
-    private fun panelCommand(v: Any?): Int? = when ((v as? String)?.lowercase()) {
+    /**
+     * Map an open/close/stop action to the BYD panel command int (1/2/3). Accepts only real
+     * strings (JS String/ConsString are CharSequence); a non-string arg returns null -> rejected,
+     * so e.g. a number whose text form is "open" cannot actuate.
+     */
+    private fun panelCommand(v: Any?): Int? = when ((v as? CharSequence)?.toString()?.lowercase()) {
         "open" -> 1
         "close" -> 2
         "stop" -> 3

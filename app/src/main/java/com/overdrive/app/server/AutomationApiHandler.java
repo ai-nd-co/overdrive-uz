@@ -87,8 +87,12 @@ public class AutomationApiHandler {
             JSONObject in;
             try { in = new JSONObject(body == null ? "" : body); }
             catch (Exception e) { HttpResponse.sendError(out, 400, "invalid JSON body"); return true; }
-            String type = in.optString("type", "");
-            if (type.isEmpty()) { HttpResponse.sendError(out, 400, "type required"); return true; }
+            Object typeRaw = in.opt("type");
+            if (!(typeRaw instanceof String) || ((String) typeRaw).isEmpty()) {
+                HttpResponse.sendError(out, 400, "type must be a non-empty string");
+                return true;
+            }
+            String type = (String) typeRaw;
             int ran = Automation.INSTANCE.fireManual(type);
             JSONObject o = new JSONObject();
             o.put("ran", ran);

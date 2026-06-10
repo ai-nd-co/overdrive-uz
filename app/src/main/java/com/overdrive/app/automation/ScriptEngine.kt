@@ -130,8 +130,8 @@ class ScriptEngine(
         act("flash", "flash") { emptyMap() }
         act("climateOn", "climate-on") { emptyMap() }
         act("climateOff", "climate-off") { emptyMap() }
-        act("sunroof", "sunroof") { a -> mapOf("action" to str(a.getOrNull(0))) }
-        act("sunshade", "sunshade") { a -> mapOf("action" to str(a.getOrNull(0))) }
+        act("sunroof", "sunroof") { a -> mapOf("action" to a.getOrNull(0)) }
+        act("sunshade", "sunshade") { a -> mapOf("action" to a.getOrNull(0)) }
         act("climateTemp", "climate-temp") { a -> mapOf("tempC" to (a.getOrNull(0) as? Number)) }
         act("climateFan", "climate-fan") { a -> mapOf("level" to (a.getOrNull(0) as? Number)) }
         act("lights", "lights") { a -> if (a.isEmpty()) emptyMap() else mapOf("on" to a[0]) }
